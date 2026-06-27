@@ -82,16 +82,19 @@ Carve those seams once, up front, and you never edit the same lines again.
 | **New:** `SpeechService.swift` (ElevenLabs STT+TTS) | — | ✅ owns | none (new file) |
 | **New:** `MicCapture.swift` (AVFoundation mic) | — | ✅ owns | none (new file) |
 | `AnthropicClient.swift` | ✅ edits (image block) | — does not touch | low (CP2 only) |
-| `ChatViewModel.swift` | edits (attach image) | edits (transcript in, TTS out) | 🔴 **HIGH** → seam |
-| `main.swift` (AppDelegate) | edits (capture wiring) | edits (mic perm, voice hotkey) | 🔴 **HIGH** → split |
-| `ChatView.swift` | minor (capture indicator) | edits (mic button, listening/TTS state) | 🟡 medium |
+| `ChatViewModel.swift` | edits (attach image) | **no edit** — drives the public seams from `VoiceController` | 🟢 low (CP2-only) → seam |
+| `main.swift` (AppDelegate) | edits (capture wiring) | **no edit** (optional `setupSpeech()` one-liner) | 🟢 low (CP2-only) |
+| `ChatView.swift` | minor (capture indicator) | edits (mic button, listening/TTS state) — CP4's only shared-file edit | 🟡 medium |
+| `Package.swift` | no edit | one **linker flag** to embed `Info.plist` (mic usage string) — not a dependency | 🟢 low (CP4-only) |
 | `ChinguPanel.swift` | reads `panel.windowNumber` to exclude from capture; no edit expected | — | low |
-| `Secrets.swift` | — | reads `.elevenLabs` (key already loaded) — likely no edit | low |
+| `Secrets.swift` | — | reads `.elevenLabs` (key already loaded); optional one-line `isRequiredNow` flip | low |
 | `SystemPrompt.swift` | maybe (vision phrasing) | — | low |
 | `GlobalHotKey.swift` | — | maybe (reuse for voice-advance) — read, don't rewrite | low |
 
-**Two red zones only:** `ChatViewModel.send()` and `main.swift`'s `AppDelegate`. Section 3
-neutralizes both.
+**Red zones, now neutralized:** `ChatViewModel` and `main.swift`'s `AppDelegate`. Section 3 carved
+the seam; the CP4 finalize pass then moved CP4's two seam lines into a new `VoiceController` and
+made its AppDelegate wiring optional — so **CP4 no longer edits either file**, and CP2 edits them
+alone. (See `CP4-SPEC.md` §6.3/§6.5.)
 
 ---
 
@@ -198,10 +201,14 @@ main ──●  (seam refactor from §3, pushed first)
   ScreenCaptureKit (CP2), AVFoundation (CP4), plus `URLSession` for ElevenLabs HTTP. **No
   new SwiftPM dependencies expected.** If either side thinks they need a package, raise it
   with the other first — `Package.swift` edits conflict easily and a dependency is rarely
-  worth it for the hackathon.
+  worth it for the hackathon. **One known exception:** CP4 adds a single **linker flag** to embed
+  `Info.plist`'s mic usage description (CP4-SPEC §4) — not a dependency. CP2 doesn't touch
+  `Package.swift`, so it's low-conflict, but coordinate before landing it.
 - **TCC permissions (different prompts, no overlap):** CP2 triggers **Screen Recording**;
   CP4 triggers **Microphone** (and Speech Recognition is *not* needed — ElevenLabs does STT
-  server-side). Independent prompts; no shared code.
+  server-side). Independent prompts; no shared code. **Note:** CP4's mic prompt additionally
+  requires an embedded `NSMicrophoneUsageDescription` or a bare `swift run` binary **crashes** on
+  the first request (CP4-SPEC §4); CP2's screen-recording prompt needs no usage-string key.
 - **Panel exclusion (CP2 ↔ `ChinguPanel`):** CP2 must exclude Chingu's own window from the
   screenshot (`SCContentFilter` `excludingWindows:`). It needs the panel's
   `windowNumber`/`NSWindow` reference, which the AppDelegate already owns (`panel`). Read it;
@@ -226,10 +233,12 @@ main ──●  (seam refactor from §3, pushed first)
 - **CP2 (Jayden):** new `ScreenCapture.swift`; flesh out `CapturedImage` and fill the `image`
   parameter in `submit(text:image:)`; add the `image` content block in `AnthropicClient`;
   exclude the panel from the capture. Don't touch the TTS hook or any speech file.
-- **CP4 (partner):** new `SpeechService.swift` + `MicCapture.swift`; feed transcripts via
-  `submit(text:)`; set the `onAssistantResponseComplete` hook for TTS; add a mic button in
-  `ChatView`; mic-permission/voice-hotkey in a separate AppDelegate extension. Don't touch
-  `AnthropicClient` or the `image` path. **~80% of CP4 (STT round-trip, TTS playback) can be
-  built and validated in a standalone test harness with zero dependency on this codebase —
-  wire into `submit(text:)` + the hook only at the end. Build that first; it carries no merge
-  risk.**
+- **CP4 (partner):** new `SpeechService.swift` + `MicCapture.swift` + `VoiceController.swift`;
+  the `VoiceController` drives the **public** seams (`model.submit(text:)` in, set
+  `model.onAssistantResponseComplete` out) so **`ChatViewModel` is not edited at all**; add a mic
+  button in `ChatView` (CP4's only shared-file edit); embed `Info.plist`'s
+  `NSMicrophoneUsageDescription` via a `Package.swift` linker flag (**ask the human first** — mic
+  access crashes a bare `swift run` binary without it; CP4-SPEC §4). Don't touch `AnthropicClient`,
+  the `image` path, or `ChatViewModel`. **~80% of CP4 (STT/TTS/endpointing) is validated via a
+  temporary in-app trigger with zero pipeline dependency — wire the seams only at the end; it
+  carries no merge risk.**

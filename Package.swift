@@ -11,7 +11,22 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "Chingu",
-            path: "Sources/Chingu"
+            path: "Sources/Chingu",
+            // Info.plist is embedded via the linker (below), not compiled/bundled —
+            // exclude it so SwiftPM doesn't warn about an unhandled file.
+            exclude: ["Info.plist"],
+            // CP4 (speech): embed an Info.plist into the binary's __TEXT,__info_plist
+            // section so macOS TCC can read NSMicrophoneUsageDescription. A bare SwiftPM
+            // executable has no app bundle, so without this the first microphone request
+            // hard-crashes (not just "denied"). See docs/CP4-SPEC.md §4.
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Sources/Chingu/Info.plist",
+                ])
+            ]
             // Entry point is the top-level code in main.swift (we drive NSApplication
             // ourselves — no @main App lifecycle).
         )

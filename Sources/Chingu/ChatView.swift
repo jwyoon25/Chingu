@@ -6,6 +6,10 @@ import SwiftUI
 struct ChatView: View {
     @ObservedObject var model: ChatViewModel
 
+    // TEMPORARY (CP4 §5 harness): proves the ElevenLabs round-trips in-app before the
+    // real mic UI exists. Remove together with SpeechDebug.swift at build-order step 6.
+    @StateObject private var speechDebug = SpeechDebug()
+
     var body: some View {
         VStack(spacing: 0) {
             thread
@@ -97,28 +101,58 @@ struct ChatView: View {
     // MARK: Composer
 
     private var composer: some View {
-        HStack(spacing: 8) {
-            // .plain + manual styling so the placeholder reads as guidance and the
-            // field clears on input automatically (it's bound to model.input, which
-            // send() empties). onSubmit gives us send-on-Enter.
-            TextField("Write your question/prompt here", text: $model.input, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...4)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(.white.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .onSubmit(model.send)                // Enter sends
-                .submitLabel(.send)
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                // .plain + manual styling so the placeholder reads as guidance and the
+                // field clears on input automatically (it's bound to model.input, which
+                // send() empties). onSubmit gives us send-on-Enter.
+                TextField("Write your question/prompt here", text: $model.input, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(.white.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .onSubmit(model.send)                // Enter sends
+                    .submitLabel(.send)
 
-            Button(action: model.send) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 24))
+                // TEMPORARY (CP4 §5 harness): tap to listen; it auto-stops when you pause
+                // (tap again to stop early). First tap triggers the mic permission prompt.
+                // Remove with SpeechDebug.swift at build-order step 6.
+                Button { speechDebug.toggleRecord() } label: {
+                    Image(systemName: speechDebug.isRecording ? "stop.circle.fill" : "mic.circle.fill")
+                        .font(.system(size: 18))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(speechDebug.isRecording ? .red : .secondary)
+                .help("CP4 STT test (listen → auto-stop → transcribe)")
+
+                // TEMPORARY (CP4 §5 harness): tap to hear a TTS round-trip. Remove with
+                // SpeechDebug.swift at build-order step 6.
+                Button { speechDebug.testTTS() } label: {
+                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 18))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("CP4 TTS test")
+
+                Button(action: model.send) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 24))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.canSend ? Color.accentColor : Color.secondary)
+                .disabled(!model.canSend)
+                .keyboardShortcut(.return, modifiers: [])   // Enter also fires the button
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(model.canSend ? Color.accentColor : Color.secondary)
-            .disabled(!model.canSend)
-            .keyboardShortcut(.return, modifiers: [])   // Enter also fires the button
+
+            // TEMPORARY (CP4 §5 harness): shows the last TTS/STT test result.
+            if !speechDebug.status.isEmpty {
+                Text(speechDebug.status)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(10)
     }
