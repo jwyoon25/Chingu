@@ -11,10 +11,13 @@ import AppKit
 ///
 /// `pixelWidth/Height` are the dimensions of the PNG actually sent to Claude (which, on
 /// the high-resolution vision tier, is the exact space Claude reports coordinates in);
-/// `displayFrame` is the captured display's frame in AppKit global points.
+/// `contentRect` is ScreenCaptureKit's captured region in AppKit global points — the
+/// space screenshot pixels map to. `displayFrame` is the matched `NSScreen.frame` (kept
+/// for diagnostics; it can differ from `contentRect` on some displays).
 struct CaptureGeometry: Equatable, Sendable {
     let pixelWidth: Int
     let pixelHeight: Int
+    let contentRect: CGRect
     let displayFrame: CGRect
 }
 
@@ -86,6 +89,8 @@ enum ScreenCapture {
         }
 
         let filter = SCContentFilter(display: display, excludingWindows: chinguWindows)
+        let contentRect = filter.contentRect
+        let pointPixelScale = filter.pointPixelScale
 
         let config = SCStreamConfiguration()
         let (width, height) = downscaledPixelSize(of: filter)
@@ -110,7 +115,41 @@ enum ScreenCapture {
         let image = CapturedImage(
             base64: base64, mediaType: "image/png", pixelWidth: pixelW, pixelHeight: pixelH)
         let geometry = CaptureGeometry(
-            pixelWidth: pixelW, pixelHeight: pixelH, displayFrame: screen.frame)
+            pixelWidth: pixelW, pixelHeight: pixelH,
+            contentRect: contentRect, displayFrame: screen.frame)
+
+        // #region agent log
+        AgentDebugLog.write(
+            location: "ScreenCapture.swift:capture",
+            message: "capture geometry",
+            hypothesisId: "A,E",
+            data: [
+                "displayID": display.displayID,
+                "contentRect": [
+                    "x": contentRect.origin.x, "y": contentRect.origin.y,
+                    "w": contentRect.width, "h": contentRect.height,
+                ],
+                "screenFrame": [
+                    "x": screen.frame.origin.x, "y": screen.frame.origin.y,
+                    "w": screen.frame.width, "h": screen.frame.height,
+                ],
+                "visibleFrame": [
+                    "x": screen.visibleFrame.origin.x, "y": screen.visibleFrame.origin.y,
+                    "w": screen.visibleFrame.width, "h": screen.visibleFrame.height,
+                ],
+                "pixelW": pixelW,
+                "pixelH": pixelH,
+                "pointPixelScale": pointPixelScale,
+                "backingScaleFactor": screen.backingScaleFactor,
+                "requestedCaptureW": width,
+                "requestedCaptureH": height,
+                "contentVsScreenWDelta": contentRect.width - screen.frame.width,
+                "contentVsScreenHDelta": contentRect.height - screen.frame.height,
+                "contentOriginVsScreenYDelta": contentRect.origin.y - screen.frame.origin.y,
+            ]
+        )
+        // #endregion
+
         return (image, geometry)
     }
 

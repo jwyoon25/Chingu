@@ -152,15 +152,16 @@ screenshot's **pixel** size (Claude's `x,y` space) and the captured **display's 
 struct CaptureGeometry: Equatable, Sendable {
     let pixelWidth: Int        // screenshot width  in px  (Claude's x-axis, 0…pixelWidth)
     let pixelHeight: Int       // screenshot height in px  (Claude's y-axis, 0…pixelHeight)
-    let displayFrame: CGRect   // captured display's frame in AppKit points (global, bottom-left origin)
+    let contentRect: CGRect    // ScreenCaptureKit's captured region in AppKit global points
+    let displayFrame: CGRect   // matched NSScreen.frame (diagnostics; can differ from contentRect)
     // (multi-monitor only) let displayID: CGDirectDisplayID; let screenIndex: Int
 }
 ```
 
 - `ScreenCapture.capture()` becomes `capture() async throws -> (CapturedImage, CaptureGeometry)`
   (or returns one combined struct). `pixelWidth/Height` are the **downscaled** dimensions actually
-  encoded (CP2 already computes these in `downscaledPixelSize`); `displayFrame` is the captured
-  `NSScreen.frame` (points).
+  encoded (CP2 already computes these in `downscaledPixelSize`); `contentRect` is the filter's
+  captured region (points); `displayFrame` is the matched `NSScreen.frame` for diagnostics.
 - **Also add the pixel size to `CapturedImage`** (`pixelWidth`, `pixelHeight`) so `AnthropicClient`
   can emit the dimensions note (§5) without reaching for geometry.
 
@@ -241,18 +242,18 @@ web and/or the screen, and Claude decides.
 Given a parsed `(x, y)` in screenshot-pixel space and the turn's `CaptureGeometry`:
 
 1. **Clamp** to the image bounds: `x ∈ [0, pixelWidth]`, `y ∈ [0, pixelHeight]`.
-2. **Scale** pixels → points using the captured display:
-   `sx = displayFrame.width / pixelWidth`, `sy = displayFrame.height / pixelHeight`.
-   `localX = x * sx` (points from the display's left), `localTopY = y * sy` (points from the
-   display's **top**).
+2. **Scale** pixels → points using the captured **contentRect** (same region SCK photographed):
+   `sx = contentRect.width / pixelWidth`, `sy = contentRect.height / pixelHeight`.
+   `localX = x * sx` (points from the content's left), `localTopY = y * sy` (points from the
+   content's **top**).
 3. **Place on the display.** Two equivalent framings — pick by overlay strategy (§7):
    - **Full-display SwiftUI overlay (recommended):** make the overlay window exactly cover
-     `displayFrame`, host a SwiftUI view whose origin is **top-left**. Then the circle's SwiftUI
+     `contentRect`, host a SwiftUI view whose origin is **top-left**. Then the circle's SwiftUI
      position is simply `(localX, localTopY)` — **no Y-flip needed**, because SwiftUI's top-left
      origin already matches the screenshot's. The Y-flip is absorbed by the window covering the
-     display.
+     captured region.
    - **Small window positioned globally (AppKit):** convert to AppKit's bottom-left global space:
-     `globalX = displayFrame.minX + localX`, `globalY = displayFrame.minY + (displayFrame.height - localTopY)`,
+     `globalX = contentRect.minX + localX`, `globalY = contentRect.minY + (contentRect.height - localTopY)`,
      then center the small circle window there.
 
 The recommended full-display SwiftUI overlay avoids manual Y-flips and makes the circle trivial to

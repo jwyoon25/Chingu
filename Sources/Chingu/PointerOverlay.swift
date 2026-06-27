@@ -16,15 +16,15 @@ final class PointerOverlay {
     private var panel: PointerOverlayPanel?
     private let content = PointerContent()
 
-    /// Show the circle at `localPoint` (points, top-left origin within `displayFrame`),
-    /// captioned `label`. `displayFrame` is the captured display's frame in AppKit global
-    /// coordinates; the overlay window is sized to cover exactly that display so SwiftUI's
-    /// top-left origin lines up with the screenshot's — no manual Y-flip needed.
-    func show(atLocalPoint localPoint: CGPoint, label: String, onDisplay displayFrame: CGRect) {
+    /// Show the circle at `localPoint` (points, top-left origin within `contentRect`),
+    /// captioned `label`. `contentRect` is ScreenCaptureKit's captured region in AppKit
+    /// global coordinates; the overlay window is sized to cover exactly that region so
+    /// SwiftUI's top-left origin lines up with the screenshot's — no manual Y-flip needed.
+    func show(atLocalPoint localPoint: CGPoint, label: String, onDisplay contentRect: CGRect) {
         let panel = ensurePanel()
         // Re-cover the (possibly changed) display each time we show.
-        panel.setFrame(displayFrame, display: false)
-        content.show(point: localPoint, label: label, canvasSize: displayFrame.size)
+        panel.setFrame(contentRect, display: false)
+        content.show(point: localPoint, label: label, canvasSize: contentRect.size)
         panel.orderFrontRegardless()   // show without activating Chingu
     }
 

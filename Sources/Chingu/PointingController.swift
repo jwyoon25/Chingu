@@ -54,7 +54,38 @@ final class PointingController: ObservableObject {
             return
         }
         let local = Self.localPoint(for: point, in: geometry)
-        overlay.show(atLocalPoint: local, label: point.label, onDisplay: geometry.displayFrame)
+        let sx = geometry.contentRect.width / CGFloat(max(geometry.pixelWidth, 1))
+        let sy = geometry.contentRect.height / CGFloat(max(geometry.pixelHeight, 1))
+
+        // #region agent log
+        AgentDebugLog.write(
+            location: "PointingController.swift:handle",
+            message: "point remap",
+            hypothesisId: "B,C",
+            data: [
+                "claudeX": point.x,
+                "claudeY": point.y,
+                "label": point.label,
+                "localX": local.x,
+                "localY": local.y,
+                "sx": sx,
+                "sy": sy,
+                "scaleUniform": abs(sx - sy) < 0.001,
+                "pixelW": geometry.pixelWidth,
+                "pixelH": geometry.pixelHeight,
+                "contentW": geometry.contentRect.width,
+                "contentH": geometry.contentRect.height,
+                "contentOriginX": geometry.contentRect.origin.x,
+                "contentOriginY": geometry.contentRect.origin.y,
+                "displayW": geometry.displayFrame.width,
+                "displayH": geometry.displayFrame.height,
+                "contentVsDisplayWDelta": geometry.contentRect.width - geometry.displayFrame.width,
+                "contentVsDisplayHDelta": geometry.contentRect.height - geometry.displayFrame.height,
+            ]
+        )
+        // #endregion
+
+        overlay.show(atLocalPoint: local, label: point.label, onDisplay: geometry.contentRect)
         scheduleAutoFade()
     }
 
@@ -73,14 +104,15 @@ final class PointingController: ObservableObject {
         }
     }
 
-    /// Remap a screenshot-pixel coordinate to a point in the display's **top-left** space
-    /// (which the full-display overlay's SwiftUI canvas uses directly — see
-    /// `docs/CP3-SPEC.md` §6). Clamp to the image, then scale pixels → points.
+    /// Remap a screenshot-pixel coordinate to a point in the captured **contentRect's**
+    /// top-left space (which the full-display overlay's SwiftUI canvas uses directly — see
+    /// `docs/CP3-SPEC.md` §6). Clamp to the image, then scale pixels → points using
+    /// `contentRect` (the same region ScreenCaptureKit photographed).
     static func localPoint(for point: ParsedPoint, in geometry: CaptureGeometry) -> CGPoint {
         let clampedX = min(max(point.x, 0), geometry.pixelWidth)
         let clampedY = min(max(point.y, 0), geometry.pixelHeight)
-        let sx = geometry.displayFrame.width / CGFloat(max(geometry.pixelWidth, 1))
-        let sy = geometry.displayFrame.height / CGFloat(max(geometry.pixelHeight, 1))
+        let sx = geometry.contentRect.width / CGFloat(max(geometry.pixelWidth, 1))
+        let sy = geometry.contentRect.height / CGFloat(max(geometry.pixelHeight, 1))
         return CGPoint(x: CGFloat(clampedX) * sx, y: CGFloat(clampedY) * sy)
     }
 }
