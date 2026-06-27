@@ -1,0 +1,348 @@
+import Foundation
+
+// MARK: - Errors
+
+enum AnthropicError: LocalizedError {
+    case missingAPIKey
+    case badStatus(Int, String)
+    case transport(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAPIKey:
+            return """
+            No API key found. Set the ANTHROPIC_API_KEY environment variable, then relaunch Chingu.
+            (In Xcode: Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables. \
+            From a terminal: export ANTHROPIC_API_KEY="sk-ant-..." before running.)
+            """
+        case let .badStatus(code, body):
+            return "Anthropic API returned HTTP \(code). \(body)"
+        case let .transport(message):
+            return "Network error talking to Anthropic: \(message)"
+        }
+    }
+}
+
+// MARK: - Wire model
+//
+// We hand-roll the request/response JSON rather than depend on an SDK: Anthropic
+// ships no Swift SDK, and the Messages API shape is small. Request/response shapes
+// follow the current Messages API (model claude-opus-4-8, streaming SSE, the
+// server-side web_search_20260209 tool). See docs/SPEC.md (CP1) and the claude-api skill.
+
+/// One message in the single chat thread. `content` holds API content blocks as
+/// raw JSON so we can faithfully echo assistant turns (text + server tool use +
+/// web-search results) back on the next request — required for multi-turn and for
+/// resuming a paused server-tool turn.
+struct WireMessage {
+    let role: String          // "user" | "assistant"
+    let content: [JSONValue]  // array of content blocks
+}
+
+/// Minimal JSON value used to build request bodies and stash response blocks verbatim.
+indirect enum JSONValue: Codable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case null
+    case array([JSONValue])
+    case object([String: JSONValue])
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() {
+            self = .null
+        } else if let b = try? c.decode(Bool.self) {
+            self = .bool(b)
+        } else if let n = try? c.decode(Double.self) {
+            self = .number(n)
+        } else if let s = try? c.decode(String.self) {
+            self = .string(s)
+        } else if let a = try? c.decode([JSONValue].self) {
+            self = .array(a)
+        } else if let o = try? c.decode([String: JSONValue].self) {
+            self = .object(o)
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: c, debugDescription: "Unsupported JSON value")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        switch self {
+        case let .string(s): try c.encode(s)
+        case let .number(n): try c.encode(n)
+        case let .bool(b): try c.encode(b)
+        case .null: try c.encodeNil()
+        case let .array(a): try c.encode(a)
+        case let .object(o): try c.encode(o)
+        }
+    }
+
+    // Convenience accessors for parsing streamed events.
+    var stringValue: String? { if case let .string(s) = self { return s } else { return nil } }
+    subscript(_ key: String) -> JSONValue? {
+        if case let .object(o) = self { return o[key] } else { return nil }
+    }
+}
+
+// MARK: - Client
+
+/// Streaming client for the Anthropic Messages API. Owns no UI; callers drive it
+/// and receive deltas through the async `send` stream.
+actor AnthropicClient {
+    static let model = "claude-opus-4-8"
+    static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    static let anthropicVersion = "2023-06-01"
+    static let maxTokens = 4096
+
+    /// The single conversation thread. Persisted only in memory — quitting erases it
+    /// (one session, no "new chat"), exactly as the spec requires.
+    private var history: [WireMessage] = []
+
+    /// Reads the key fresh each call from the environment. Never logged, never stored.
+    private var apiKey: String? {
+        let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
+        guard let key, !key.isEmpty else { return nil }
+        return key
+    }
+
+    /// Events surfaced to the UI as a Claude turn streams in.
+    enum StreamEvent {
+        case textDelta(String)            // incremental assistant text
+        case searching                    // a server-side web search started
+        case failed(AnthropicError)       // terminal error; nothing more will arrive
+        case done                         // turn finished cleanly
+    }
+
+    /// Append a user message and stream the assistant's reply. Yields text deltas as
+    /// they arrive. The full assistant turn is committed to `history` when complete so
+    /// follow-ups keep context. Handles the server-tool `pause_turn` by re-requesting.
+    func send(_ userText: String) -> AsyncStream<StreamEvent> {
+        AsyncStream { continuation in
+            let task = Task {
+                guard let key = self.apiKey else {
+                    continuation.yield(.failed(.missingAPIKey))
+                    continuation.finish()
+                    return
+                }
+
+                self.history.append(WireMessage(role: "user", content: [
+                    .object(["type": .string("text"), "text": .string(userText)])
+                ]))
+
+                do {
+                    // Loop to follow `pause_turn`: the server-side web-search loop can
+                    // pause mid-turn; we resend with the partial assistant turn appended
+                    // and the server resumes. Bounded so a misbehaving turn can't spin.
+                    var continuations = 0
+                    while true {
+                        let (assistantBlocks, stopReason) =
+                            try await self.streamOnce(key: key, continuation: continuation)
+
+                        // Commit whatever the assistant produced this round.
+                        self.history.append(
+                            WireMessage(role: "assistant", content: assistantBlocks))
+
+                        if stopReason == "pause_turn", continuations < 3 {
+                            continuations += 1
+                            continue  // resend; history now ends with the partial turn
+                        }
+                        break
+                    }
+                    continuation.yield(.done)
+                } catch let error as AnthropicError {
+                    continuation.yield(.failed(error))
+                } catch {
+                    continuation.yield(.failed(.transport(error.localizedDescription)))
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Performs one streaming request over the current `history` and returns the
+    /// assistant content blocks it produced plus the stop reason. Text deltas are
+    /// forwarded to `continuation` live as they arrive.
+    private func streamOnce(
+        key: String,
+        continuation: AsyncStream<StreamEvent>.Continuation
+    ) async throws -> (blocks: [JSONValue], stopReason: String?) {
+        var request = URLRequest(url: Self.endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(key, forHTTPHeaderField: "x-api-key")
+        request.setValue(Self.anthropicVersion, forHTTPHeaderField: "anthropic-version")
+        request.httpBody = try self.encodeRequestBody()
+
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await URLSession.shared.bytes(for: request)
+        } catch {
+            throw AnthropicError.transport(error.localizedDescription)
+        }
+
+        // Non-2xx: the body is a JSON error, not an SSE stream. Drain it for the message.
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            var raw = Data()
+            for try await byte in bytes { raw.append(byte) }
+            let detail = Self.extractErrorMessage(from: raw)
+            throw AnthropicError.badStatus(http.statusCode, detail)
+        }
+
+        // Accumulate content blocks by index as the stream arrives. We keep the
+        // start block (which carries type + any server_tool_use fields) and fold in
+        // deltas (text_delta, input_json_delta) so the committed assistant turn is
+        // faithful enough to resend on a follow-up or a pause_turn resume.
+        var assembler = StreamAssembler()
+        var stopReason: String?
+
+        for try await line in bytes.lines {
+            // SSE frames are "event:" and "data:" lines separated by blank lines.
+            // Only the data payload matters here; the event name is redundant with
+            // the JSON's own "type" field.
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            if payload.isEmpty || payload == "[DONE]" { continue }
+            guard let data = payload.data(using: .utf8),
+                  let event = try? JSONDecoder().decode(JSONValue.self, from: data)
+            else { continue }
+
+            switch event["type"]?.stringValue {
+            case "content_block_start":
+                if let index = event["index"].flatMap(Self.intValue),
+                   let block = event["content_block"] {
+                    assembler.startBlock(at: index, block: block)
+                    if block["type"]?.stringValue == "server_tool_use" {
+                        continuation.yield(.searching)
+                    }
+                }
+            case "content_block_delta":
+                if let index = event["index"].flatMap(Self.intValue),
+                   let delta = event["delta"] {
+                    if let text = delta["text"]?.stringValue,
+                       delta["type"]?.stringValue == "text_delta" {
+                        continuation.yield(.textDelta(text))
+                    }
+                    assembler.applyDelta(at: index, delta: delta)
+                }
+            case "message_delta":
+                if let reason = event["delta"]?["stop_reason"]?.stringValue {
+                    stopReason = reason
+                }
+            case "error":
+                // Mid-stream error event from the API.
+                let message = event["error"]?["message"]?.stringValue ?? "stream error"
+                throw AnthropicError.transport(message)
+            default:
+                break  // message_start, content_block_stop, ping, message_stop
+            }
+        }
+
+        return (assembler.blocks(), stopReason)
+    }
+
+    private static func intValue(_ v: JSONValue) -> Int? {
+        if case let .number(n) = v { return Int(n) }
+        return nil
+    }
+
+    /// Pulls a human-readable message out of an Anthropic error body, falling back to
+    /// the raw text. Never surfaces the API key (it isn't in the body anyway).
+    private static func extractErrorMessage(from data: Data) -> String {
+        if let value = try? JSONDecoder().decode(JSONValue.self, from: data),
+           let message = value["error"]?["message"]?.stringValue {
+            return message
+        }
+        return String(data: data, encoding: .utf8) ?? "(no response body)"
+    }
+
+    /// Builds the Messages API request body: model, streaming, the conversation, and
+    /// the server-side web search tool.
+    private func encodeRequestBody() throws -> Data {
+        let messages: [JSONValue] = history.map { msg in
+            .object([
+                "role": .string(msg.role),
+                "content": .array(msg.content),
+            ])
+        }
+        let body: JSONValue = .object([
+            "model": .string(Self.model),
+            "max_tokens": .number(Double(Self.maxTokens)),
+            "stream": .bool(true),
+            "messages": .array(messages),
+            "tools": .array([
+                .object([
+                    "type": .string("web_search_20260209"),
+                    "name": .string("web_search"),
+                ])
+            ]),
+        ])
+        return try JSONEncoder().encode(body)
+    }
+
+    /// Clears the in-memory thread. (Not surfaced in CP1 UI — no "new chat" — but
+    /// handy for tests/teardown.)
+    func reset() {
+        history.removeAll()
+    }
+}
+
+// MARK: - SSE block assembly
+
+/// Reassembles streamed content blocks into complete blocks suitable for echoing
+/// back to the API. Tracks each block by its stream index and folds in deltas.
+private struct StreamAssembler {
+    private struct Partial {
+        var block: JSONValue            // the content_block_start object
+        var textBuffer: String = ""     // accumulated text_delta
+        var jsonBuffer: String = ""     // accumulated input_json_delta (partial JSON)
+    }
+    private var partials: [Int: Partial] = [:]
+    private var order: [Int] = []
+
+    mutating func startBlock(at index: Int, block: JSONValue) {
+        if partials[index] == nil { order.append(index) }
+        partials[index] = Partial(block: block)
+    }
+
+    mutating func applyDelta(at index: Int, delta: JSONValue) {
+        guard partials[index] != nil else { return }
+        switch delta["type"]?.stringValue {
+        case "text_delta":
+            if let t = delta["text"]?.stringValue { partials[index]!.textBuffer += t }
+        case "input_json_delta":
+            if let j = delta["partial_json"]?.stringValue { partials[index]!.jsonBuffer += j }
+        default:
+            break  // citations_delta etc. — not needed to round-trip the turn
+        }
+    }
+
+    /// Finalizes all blocks in arrival order, materializing accumulated text and
+    /// server-tool input into the block objects.
+    func blocks() -> [JSONValue] {
+        order.compactMap { index in
+            guard let partial = partials[index] else { return nil }
+            guard case var .object(obj) = partial.block else { return partial.block }
+
+            switch obj["type"]?.stringValue {
+            case "text":
+                obj["text"] = .string(partial.textBuffer)
+            case "server_tool_use":
+                // Replace the (empty) streamed input with the assembled JSON object.
+                if let data = partial.jsonBuffer.data(using: .utf8),
+                   let parsed = try? JSONDecoder().decode(JSONValue.self, from: data) {
+                    obj["input"] = parsed
+                } else if obj["input"] == nil {
+                    obj["input"] = .object([:])
+                }
+            default:
+                break  // web_search_tool_result and others arrive complete in start
+            }
+            return .object(obj)
+        }
+    }
+}
