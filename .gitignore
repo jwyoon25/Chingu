@@ -6,6 +6,8 @@
 Secrets.xcconfig
 Secrets.plist
 Secrets.swift
+# …but our app's Secrets.swift holds NO keys (it only reads env vars), so track it.
+!Sources/Chingu/Secrets.swift
 *.secret
 
 # Xcode / Swift
