@@ -38,6 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Show on launch so the first run is obviously alive; the hotkey hides/shows
         // it thereafter.
         showPanel()
+
+        // CP2: wire screen capture (one-shot debug capture for now — see ScreenCapture.swift).
+        setupCapture()
     }
 
     private func togglePanel() {

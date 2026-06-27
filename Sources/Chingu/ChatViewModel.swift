@@ -20,7 +20,11 @@ struct ChatMessage: Identifiable, Equatable {
 /// `submit(text:image:)` signature is locked once and never has to be reshaped later
 /// (see `docs/PARALLEL-CP2-CP4.md`). CP1/CP4 ignore it; passing `nil` is text-only.
 struct CapturedImage: Equatable {
-    // CP2: let base64: String; let mediaType: String   // e.g. "image/png"
+    /// PNG bytes, base64-encoded with **no** newlines — the `data` of the Claude
+    /// `image` content block.
+    let base64: String
+    /// IANA media type for the block's `source` — "image/png".
+    let mediaType: String
 }
 
 /// Drives the chat UI. Owns the rendered message list and bridges the
