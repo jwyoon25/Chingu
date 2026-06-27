@@ -6,6 +6,18 @@ import AppKit
 // while landing CP4 — flag for CP2's owner.
 @preconcurrency import ScreenCaptureKit
 
+/// Geometry of the screenshot taken for a turn — everything CP3 needs to map a
+/// screenshot-pixel coordinate back to an on-screen point (see `docs/CP3-SPEC.md` §4/§6).
+///
+/// `pixelWidth/Height` are the dimensions of the PNG actually sent to Claude (which, on
+/// the high-resolution vision tier, is the exact space Claude reports coordinates in);
+/// `displayFrame` is the captured display's frame in AppKit global points.
+struct CaptureGeometry: Equatable, Sendable {
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let displayFrame: CGRect
+}
+
 /// Screenshot capture for CP2 (see `docs/CP2-SPEC.md`).
 ///
 /// Grabs the active display *minus Chingu's own windows* via ScreenCaptureKit and
@@ -40,11 +52,12 @@ enum ScreenCapture {
         }
     }
 
-    /// Capture the active display as a PNG, excluding Chingu's own windows. Awaited on
-    /// the Enter that starts a turn (CP2-SPEC §1). `async` but non-blocking: it
-    /// suspends, it never freezes the UI.
+    /// Capture the active display as a PNG, excluding Chingu's own windows, and return it
+    /// alongside the geometry CP3 needs to remap pointing coordinates. Awaited on the
+    /// Enter that starts a turn (CP2-SPEC §1). `async` but non-blocking: it suspends, it
+    /// never freezes the UI.
     @MainActor
-    static func capture() async throws -> CapturedImage {
+    static func capture() async throws -> (image: CapturedImage, geometry: CaptureGeometry) {
         // Fetching shareable content is also the Screen Recording permission gate: if
         // access isn't granted this throws, and we surface a clear, actionable message.
         let content: SCShareableContent
@@ -58,9 +71,15 @@ enum ScreenCapture {
         guard let display = activeDisplay(in: content) ?? content.displays.first else {
             throw CaptureError.noDisplay
         }
+        // The matching NSScreen gives the display's frame in AppKit points — the
+        // coordinate space CP3 places the pointing circle in.
+        guard let screen = nsScreen(for: display) ?? NSScreen.main else {
+            throw CaptureError.noDisplay
+        }
 
         // Exclude every window owned by *our* process. Robust (catches any Chingu
-        // window) and needs no reference into the panel/AppDelegate (CP2-SPEC §4.1).
+        // window, incl. CP3's pointer overlay) and needs no reference into the
+        // panel/AppDelegate (CP2-SPEC §4.1).
         let myPID = ProcessInfo.processInfo.processIdentifier
         let chinguWindows = content.windows.filter {
             $0.owningApplication?.processID == myPID
@@ -80,7 +99,19 @@ enum ScreenCapture {
         guard let base64 = pngBase64(from: cgImage) else {
             throw CaptureError.encodingFailed
         }
-        return CapturedImage(base64: base64, mediaType: "image/png")
+
+        // Report the PNG's actual pixel size. claude-opus-4-8 is the high-resolution
+        // vision tier (≤2576px long edge, ≤~3.75MP), so our 1568px-capped image is sent
+        // verbatim and NOT re-downscaled server-side — i.e. these dims are the exact
+        // space Claude returns coordinates in. CP3 accuracy depends on this invariant
+        // (see docs/CP3-SPEC.md §4).
+        let pixelW = cgImage.width
+        let pixelH = cgImage.height
+        let image = CapturedImage(
+            base64: base64, mediaType: "image/png", pixelWidth: pixelW, pixelHeight: pixelH)
+        let geometry = CaptureGeometry(
+            pixelWidth: pixelW, pixelHeight: pixelH, displayFrame: screen.frame)
+        return (image, geometry)
     }
 
     /// The `SCDisplay` matching the active `NSScreen`, paired by `CGDirectDisplayID`.
@@ -94,6 +125,16 @@ enum ScreenCapture {
         else { return nil }
         let displayID = CGDirectDisplayID(number.uint32Value)
         return content.displays.first { $0.displayID == displayID }
+    }
+
+    /// The `NSScreen` whose `CGDirectDisplayID` matches the captured `SCDisplay`, so the
+    /// pointing circle is placed on the same monitor we photographed.
+    @MainActor
+    private static func nsScreen(for display: SCDisplay) -> NSScreen? {
+        NSScreen.screens.first { screen in
+            (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
+                .uint32Value == display.displayID
+        }
     }
 
     /// Native pixel size of the filtered content, scaled down so the long edge is at

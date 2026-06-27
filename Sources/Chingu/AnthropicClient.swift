@@ -178,6 +178,17 @@ actor AnthropicClient {
                     "data": .string(image.base64),
                 ]),
             ]))
+            // CP3: tell Claude the screenshot's exact pixel space so any [POINT:x,y:…]
+            // tag it emits is anchored to the image it actually sees (no server-side
+            // resize on the high-res tier — see docs/CP3-SPEC.md §4/§5a). Image block
+            // first, then this note, then the question.
+            blocks.append(.object([
+                "type": .string("text"),
+                "text": .string(
+                    "(The screenshot above is \(image.pixelWidth)x\(image.pixelHeight) "
+                    + "pixels. Coordinates use this exact space: origin top-left, x "
+                    + "increases right, y increases down.)"),
+            ]))
         }
         blocks.append(.object(["type": .string("text"), "text": .string(text)]))
         return blocks

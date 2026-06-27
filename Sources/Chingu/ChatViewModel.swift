@@ -28,6 +28,10 @@ struct CapturedImage: Equatable, Sendable {
     let base64: String
     /// IANA media type for the block's `source` — "image/png".
     let mediaType: String
+    /// Pixel dimensions of the encoded PNG — the exact coordinate space Claude is told
+    /// about and reports pointing coordinates in (CP3; see `docs/CP3-SPEC.md` §5a).
+    let pixelWidth: Int
+    let pixelHeight: Int
 }
 
 /// Drives the chat UI. Owns the rendered message list and bridges the
@@ -50,6 +54,16 @@ final class ChatViewModel: ObservableObject {
     /// text-to-speech — see `docs/CP4-SPEC.md`. Default `nil` = no-op, so CP1/CP2
     /// behave exactly as before. Invoked on the main actor, after the empty-bubble guard.
     var onAssistantResponseComplete: ((String) -> Void)?
+
+    /// Fired once per turn with the parsed pointing tag (`nil` = clear) and the geometry
+    /// of the screenshot it refers to. **CP3 pointing seam:** `PointingController` sets
+    /// this to remap the coordinate and draw the on-screen circle — see
+    /// `docs/CP3-SPEC.md` §8. Default `nil` = no-op; coordinates are never shown/spoken.
+    var onPointing: ((ParsedPoint?, CaptureGeometry?) -> Void)?
+
+    /// This turn's screenshot geometry, stashed by `send()` between capture and `submit`
+    /// (CP3). A voice/text-only turn leaves it `nil`. Consumed once per `submit`.
+    private var pendingGeometry: CaptureGeometry?
 
     var canSend: Bool {
         !isResponding && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -76,10 +90,12 @@ final class ChatViewModel: ObservableObject {
     /// goes through text-only instead of blocking. Clears the notice on success.
     private func captureScreen() async -> CapturedImage? {
         do {
-            let shot = try await ScreenCapture.capture()
+            let (shot, geometry) = try await ScreenCapture.capture()
             captureNotice = nil
+            pendingGeometry = geometry   // CP3: remembered for this turn's pointing remap
             return shot
         } catch {
+            pendingGeometry = nil
             captureNotice = (error as? ScreenCapture.CaptureError)?.errorDescription
                 ?? "Couldn't capture the screen — answering without it."
             return nil
@@ -97,6 +113,13 @@ final class ChatViewModel: ObservableObject {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding else { return }
         isResponding = true
+
+        // CP3: this turn's screenshot geometry (set by `send()` if it captured). Consume
+        // it so it can't leak into a later turn, and clear any existing circle now — we
+        // re-point (or clear) once the reply finishes and its [POINT] tag is parsed.
+        let geometry = pendingGeometry
+        pendingGeometry = nil
+        onPointing?(nil, nil)
 
         messages.append(ChatMessage(role: .user, text: text, hasImage: image != nil))
         let assistantID = appendStreamingAssistant()
@@ -127,15 +150,23 @@ final class ChatViewModel: ObservableObject {
                         $0.isSearching = false
                     }
                 case .done:
+                    // CP3: split the machine-readable [POINT:…] tag off the end before
+                    // anything sees the text — so neither the bubble nor TTS shows or
+                    // speaks a coordinate. `parse` is lenient: no/malformed tag ⇒ no point.
+                    let rawFinal = messages.first(where: { $0.id == assistantID })?.text ?? ""
+                    let parsed = PointTag.parse(rawFinal)
                     update(assistantID) {
                         $0.isStreaming = false
                         $0.isSearching = false
                         // An empty assistant turn (e.g. immediate refusal) shouldn't
                         // leave a blank bubble.
-                        if $0.text.isEmpty { $0.text = "(no response)" }
+                        $0.text = parsed.clean.isEmpty ? "(no response)" : parsed.clean
                     }
-                    // CP4 output seam: hand the final reply to any registered listener
-                    // (e.g. text-to-speech). No-op when unset.
+                    // CP3 pointing seam: remap + draw the circle (or clear if [POINT:none]
+                    // / no tag / a turn with no screenshot). No-op when unset.
+                    onPointing?(parsed.point, geometry)
+                    // CP4 output seam: hand the final (tag-stripped) reply to any
+                    // registered listener (e.g. text-to-speech). No-op when unset.
                     if let finalText = messages.first(where: { $0.id == assistantID })?.text {
                         onAssistantResponseComplete?(finalText)
                     }

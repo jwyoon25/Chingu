@@ -8,10 +8,14 @@ struct ChatView: View {
     /// CP4 voice loop. Owned here as a @StateObject built from `model` so it lives with
     /// the view and `main.swift` needs no change. It drives the chat's public seams.
     @StateObject private var voice: VoiceController
+    /// CP3 pointing loop. Same outside-in pattern: built from `model`, it sets
+    /// `model.onPointing` and owns the on-screen circle overlay (no `main.swift` change).
+    @StateObject private var pointer: PointingController
 
     init(model: ChatViewModel) {
         self.model = model
         _voice = StateObject(wrappedValue: VoiceController(model: model))
+        _pointer = StateObject(wrappedValue: PointingController(model: model))
     }
 
     var body: some View {
@@ -233,6 +237,11 @@ private struct MessageRow: View {
         if message.role == .assistant, message.isStreaming, message.text.isEmpty,
            !message.isSearching {
             return "▍"
+        }
+        // CP3: keep the machine-readable [POINT:…] tag (or an in-progress fragment) out of
+        // the bubble as it streams in; the authoritative strip happens in `.done`.
+        if message.role == .assistant {
+            return PointTag.strippingTrailingTag(message.text)
         }
         return message.text
     }

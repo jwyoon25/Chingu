@@ -145,28 +145,41 @@ only saves the screenshot — it runs no analysis (no LLM/VLM/OCR) yet.
 Chingu gives specific instructions and shows the user exactly where to click (pointer, circle).
 Useful for *"How do I bold this text?"* or *"How do I insert a transition?"*
 
-- It guides the user to click only the **first** button.
-- If there's an overflow menu with further steps, it outputs the remaining steps as a **text
-  tree** for the user to follow.
+- It guides the user to click only the **first** control (one circle, the immediate next click).
+- For a multi-step path, the user clicks, then asks *"what's next"* — Chingu re-captures and
+  points at the next control (CP3b). It does not draw multiple circles at once.
 
-#### How it works — coordinate accuracy is the key risk
+#### How it works — pure vision (Hey-Clicky-style)
 
-VLMs (including Claude) are **unreliable at exact pixel coordinates** — often off by 50–150 px,
-which is fatal for a circle overlay. This is the biggest *reliability* risk in the project. We
-solve it by **splitting "which" from "where":**
+**Claude eyeballs the screenshot and reports the pixel coordinate by eye; the app trusts it and
+draws a circle there.** There is **no Accessibility API, no OCR, no UI-element lookup** in the
+live path — accuracy is entirely the vision model's spatial accuracy. The flow:
 
-- **Claude picks the target (reasoning):** the model decides *which* control the user needs (e.g.
-  "they want Effects → Video Transitions → Cross Dissolve").
-- **Accessibility API locates it (measurement):** the macOS Accessibility API (`AXUIElement`)
-  queries the focused app's UI tree and returns the **exact frame** of the named button/menu
-  item — real coordinates from the OS, not a guess. For the demo app (Premiere), we map the
-  named control → its `AXUIElement` → its precise rect → draw the circle dead-on. This is the
-  README's "button-map navigation for demo" hedge, made concrete.
-- **Fallback** when AX can't resolve a control: use VLM coordinates with a deliberately **large**
-  circle that tolerates the error, plus a text label.
+- **Tell Claude the exact pixel space.** The screenshot already captured on Enter (CP2) is sent
+  with a short note of its exact pixel dimensions. Because `claude-opus-4-8` is on Anthropic's
+  high-resolution vision tier (≤ 2576 px long edge), our 1568-px-capped image is **not**
+  re-downscaled server-side, so the coordinates Claude reports are in the space we announce.
+- **Claude points in a tag.** The system prompt teaches Claude to append, at the very end of its
+  reply, exactly one tag: `[POINT:x,y:label]` (integer pixels, origin top-left; `label` is a 1–3
+  word control name) — or `[POINT:none]` when pointing wouldn't help. The spoken sentence names
+  the control ("the Bold button"); it never says the numbers.
+- **The app parses, strips, remaps, and draws.** When the turn completes, the app splits the tag
+  off the text (so neither the bubble nor TTS ever shows or speaks a coordinate), scales the
+  pixel coordinate to a screen point using the captured display's geometry, and draws a circle
+  there. The app does **no** verification that a control is actually there — it trusts the number.
+- **Accuracy hedge.** Because the model can be off by tens of pixels, the circle is **large and
+  forgiving** (it points "around here," not at one pixel), and the prompt steers Claude toward
+  clearly identifiable, non-edge targets.
 
-The circle is drawn in the same non-activating overlay, so showing it never steals focus from
-the target app.
+The circle is a **separate, click-through, non-activating overlay** (it sets `ignoresMouseEvents`),
+so it floats over the target app's menus, never steals focus, and never blocks the very click it's
+pointing at — the user clicks the real control underneath it.
+
+> **Why not the Accessibility API?** An earlier design split "which" (Claude) from "where" (the
+> macOS `AXUIElement` tree, for ground-truth rects). We deliberately dropped it: pure vision is
+> zero-infrastructure and good enough with a forgiving circle. A ground-truth element lookup
+> (AX or Computer-Use) remains the known upgrade path if pixel-exact pointing is ever needed —
+> see `CP3-SPEC.md` §13.
 
 ### Checkpoint 3b — multi-step pointing
 
@@ -188,18 +201,19 @@ Solution — **never take focus to advance:**
 
 - The **non-activating panel** (from CP1) means the circle and step text are shown *without ever
   becoming the key window* — the menu behind it stays open.
-- **Advance via global hotkey, not a click.** After clicking the highlighted button, the user
-  presses a hotkey. On that press, Chingu re-captures the screen, sees the new menu state, and
-  draws the next circle. No click into Chingu → focus never leaves the target app. **The hotkey
-  press *is* the "I clicked, what's next" signal.** This is the primary, reliable path.
+- **Advance via a focus-preserving signal, not a click into Chingu.** After clicking the
+  highlighted control, the user signals "what's next" by **voice** (when CP4 is present — the
+  cleanest, zero-focus-change path) or a **dedicated advance hotkey**. On that signal Chingu
+  re-captures the screen, sees the new menu state, and draws the next circle. No click into
+  Chingu → focus never leaves the target app. **The signal *is* the "I clicked, what's next."**
 - **Typing is still available** when the user wants to *refine or change* the question
   (e.g. "no, I meant the audio transition"). Typing steals focus and closes the menu — but that's
   acceptable, because at that point the user is abandoning the current step anyway, and Chingu
   re-captures fresh on the next Enter.
 
-The rule: **hotkey to advance without disrupting; typing available when you're done with the
-current menu.** Voice will later make this even cleaner (see CP4), but CP3b ships fully on
-hotkey + text input — it does not depend on voice.
+The rule: **a focus-preserving signal (voice or hotkey) to advance without disrupting; typing
+available when you're done with the current menu.** Voice (CP4) makes the advance seamless; absent
+voice, CP3b ships on the advance hotkey + text input.
 
 ---
 
@@ -274,13 +288,15 @@ You're in Premiere and ask Chingu: *"How do I add a fading transition between sc
 2?"*
 
 1. Chingu captures a screenshot the moment you press Enter (ScreenCaptureKit, excluding the
-   overlay). It only saves the image — no analysis yet.
-2. Chingu sends question + screenshot to Claude, which routes **YES** (needs the screen).
-3. The model answers, and decides the answer needs a **cursor overlay**.
-4. The model names the target control; the **Accessibility API** resolves its exact rect; Chingu
-   draws a circle there in the non-activating overlay.
-5. For a multi-step path, the user clicks, presses the hotkey (or, in CP4, says "what's next"),
-   and Chingu re-captures and points to the next control.
+   overlay), along with its exact pixel dimensions. It only saves the image — no analysis yet.
+2. Chingu sends question + screenshot (+ a note of its pixel size) to Claude, which uses the
+   screen to answer.
+3. The model answers in plain speech and decides the answer needs a **circle**.
+4. The model reports the target's pixel coordinate in a `[POINT:x,y:label]` tag; Chingu strips
+   the tag from the spoken text, remaps the pixel to a screen point, and draws a circle there in
+   the click-through overlay (the user clicks the real control under it).
+5. For a multi-step path, the user clicks, then says "what's next" (CP4) or presses the advance
+   hotkey, and Chingu re-captures and points to the next control.
 
 ---
 
@@ -294,7 +310,8 @@ You're in Premiere and ask Chingu: *"How do I add a fading transition between sc
 | Screenshot capture | ScreenCaptureKit with `excludingWindows:` | CP2 |
 | OCR/VLM pre-pass | None — single multimodal Claude call | CP2 |
 | YES/NO routing | Always attach screenshot; Claude uses or ignores | CP2 |
-| Coordinate accuracy | Claude picks target, Accessibility API locates it | CP3a |
-| Multi-step advance | Hotkey to advance (focus-preserving); typing to refine | CP3b |
+| On-screen pointing | Pure vision — Claude reports pixel coords in a `[POINT:x,y:label]` tag; app trusts + remaps to a click-through circle (no Accessibility API) | CP3a |
+| Pointer accuracy hedge | Large forgiving circle + exact-dims note + prompt steers to clear, non-edge targets | CP3a |
+| Multi-step advance | Focus-preserving signal (voice "what's next" w/ CP4, else advance hotkey); typing to refine | CP3b |
 | Speech | ElevenLabs STT (end-of-question) + ElevenLabs TTS responses; voice advance | CP4 |
 | Parallel-dev seam | Locked contract: `submit(text:image:)` input + `onAssistantResponseComplete` output; CP2∥CP4 off `main`, merge CP2→CP4 (see `PARALLEL-CP2-CP4.md`) | CP2/CP4 |
