@@ -120,6 +120,10 @@ final class MicCapture {
 
         while true {
             try? await Task.sleep(nanoseconds: 50_000_000)   // ~50 ms
+            if Task.isCancelled {        // e.g. the panel was hidden mid-listen
+                _ = try? stop()
+                throw CancellationError()
+            }
             if stopRequested { break }
 
             elapsed += poll

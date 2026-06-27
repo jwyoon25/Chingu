@@ -27,6 +27,7 @@ final class VoiceController: NSObject, ObservableObject {
     private let mic = MicCapture()
     private var player: AVAudioPlayer?       // retained, or playback is cut off mid-clip
     private var listenTask: Task<Void, Never>?
+    private var cancellables = Set<AnyCancellable>()
 
     init(model: ChatViewModel) {
         self.model = model
@@ -36,6 +37,45 @@ final class VoiceController: NSObject, ObservableObject {
         model.onAssistantResponseComplete = { [weak self] reply in
             Task { await self?.speak(reply) }
         }
+
+        // The global hotkey (⌃⌥⌘K) posts these when Chingu is shown/hidden, so summoning
+        // the overlay also starts listening hands-free (and dismissing it stops voice).
+        NotificationCenter.default.publisher(for: .chinguActivateVoice)
+            .sink { [weak self] _ in Task { @MainActor in self?.activateVoice() } }
+            .store(in: &cancellables)
+        NotificationCenter.default.publisher(for: .chinguDeactivateVoice)
+            .sink { [weak self] _ in Task { @MainActor in self?.deactivateVoice() } }
+            .store(in: &cancellables)
+    }
+
+    // MARK: Hotkey-driven voice activation
+
+    /// Start a voice turn from the global hotkey. Mirrors a mic tap but biased to *start*:
+    /// barge in on a spoken reply, no-op if already capturing or a turn is in flight.
+    func activateVoice() {
+        switch state {
+        case .idle:
+            guard !model.isResponding else { return }
+            startListening()
+        case .speaking:
+            stopSpeaking()
+            startListening()
+        case .listening, .transcribing:
+            break
+        }
+    }
+
+    /// Chingu was dismissed — stop playback and cancel an in-progress capture so the mic
+    /// isn't left listening behind a hidden panel.
+    func deactivateVoice() {
+        stopSpeaking()
+        if state == .listening || state == .transcribing { cancelListening() }
+    }
+
+    private func cancelListening() {
+        listenTask?.cancel()
+        listenTask = nil
+        state = .idle
     }
 
     // MARK: Mic button
@@ -118,4 +158,11 @@ extension VoiceController: AVAudioPlayerDelegate {
             if self.state == .speaking { self.state = .idle }
         }
     }
+}
+
+extension Notification.Name {
+    /// Posted when Chingu is shown via the global hotkey — start listening hands-free.
+    static let chinguActivateVoice = Notification.Name("chingu.activateVoice")
+    /// Posted when Chingu is hidden via the global hotkey — stop listening/playback.
+    static let chinguDeactivateVoice = Notification.Name("chingu.deactivateVoice")
 }

@@ -332,9 +332,9 @@ the message list scrolls inside it).
   whole process (no dynamic unregister needed — see the comment in the file if hotkeys ever become
   dynamic).
 - On press → the app delegate's `togglePanel()`.
-- **Chosen combo: `⌃⌥⌘Space`** (Control-Option-Command-Space) — three modifiers on Space dodges
-  `⌘Space` (Spotlight), `⌃Space` (input-source switch), and `⌥⌘Space` (which collided with Finder
-  on some setups).
+- **Chosen combo: `⌃⌥⌘K`** (Control-Option-Command-K) — three modifiers keep it clear of common
+  system/app shortcuts. (Earlier builds used `⌃⌥⌘Space`, changed to avoid `Space` collisions with
+  Spotlight / input-source / Finder shortcuts.)
 - **Note:** a global hotkey via Carbon/`RegisterEventHotKey` does **not** require the
   Accessibility permission (that's only for event taps / synthetic events, which are a CP3+
   concern). CP1's hotkey works with no TCC prompt.
@@ -385,7 +385,7 @@ All must hold:
 `.env` is gitignored; `.env.example` (placeholders only) is committed. Keys are never hard-coded,
 never printed in logs, and only read via `ProcessInfo`.
 
-**Hotkey:** `⌃⌥⌘Space` (Control-Option-Command-Space) toggles the overlay from any app.
+**Hotkey:** `⌃⌥⌘K` (Control-Option-Command-K) toggles the overlay from any app.
 
 **Test:** one plain question (`What is 49 × 52 + 10?`) and one current-info question
 (`What's the latest stable macOS version?` — should show "Searching the web…" then a cited answer).

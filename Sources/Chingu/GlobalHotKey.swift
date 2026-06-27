@@ -24,7 +24,7 @@ final class GlobalHotKey {
     private static var eventHandler: EventHandlerRef?
 
     /// - Parameters:
-    ///   - keyCode: a Carbon virtual key code (e.g. `kVK_Space`).
+    ///   - keyCode: a Carbon virtual key code (e.g. `kVK_ANSI_K`).
     ///   - modifiers: Carbon modifier mask (e.g. `cmdKey | optionKey`).
     init(keyCode: UInt32, modifiers: UInt32, onPress: @escaping () -> Void) {
         self.id = Self.nextID

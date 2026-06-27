@@ -52,7 +52,7 @@ Anthropic Swift SDK; we hand-write the JSON request and parse SSE with `URLSessi
   `pause_turn`. Owns the in-memory conversation history (one session, no persistence).
 - `Secrets.swift` — centralized key loading.
 - `SystemPrompt.swift` — placeholder system prompt (intentionally minimal in CP1).
-- `GlobalHotKey.swift` — Carbon `RegisterEventHotKey` wrapper. Hotkey: **⌃⌥⌘Space**.
+- `GlobalHotKey.swift` — Carbon `RegisterEventHotKey` wrapper. Hotkey: **⌃⌥⌘K**.
 
 ## Parallel development (CP2 ∥ CP4) — READ BEFORE CODING
 

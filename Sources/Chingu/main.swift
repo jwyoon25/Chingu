@@ -25,14 +25,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = ChinguPanel(rootView: ChatView(model: model))
         positionBelowNotch()
 
-        // Global hotkey: ⌃⌥⌘Space toggles the overlay from any app. Three modifiers on
-        // Space dodges ⌘Space (Spotlight), ⌃Space (input source), and ⌥⌘Space (which
-        // collided with Finder on some setups).
+        // Global hotkey: ⌃⌥⌘K toggles the overlay from any app. Three modifiers keep it
+        // clear of common system/app shortcuts.
         hotKey = GlobalHotKey(
-            keyCode: UInt32(kVK_Space),
+            keyCode: UInt32(kVK_ANSI_K),
             modifiers: UInt32(controlKey | optionKey | cmdKey)
         ) { [weak self] in
-            self?.togglePanel()
+            guard let self else { return }
+            // Showing the overlay also starts voice input (hands-free); hiding stops it.
+            // The voice loop (CP4) listens for these via NotificationCenter — see
+            // VoiceController — so the AppDelegate stays decoupled from it.
+            let willShow = !self.panel.isVisible
+            self.togglePanel()
+            NotificationCenter.default.post(
+                name: willShow ? .chinguActivateVoice : .chinguDeactivateVoice, object: nil)
         }
 
         // Show on launch so the first run is obviously alive; the hotkey hides/shows

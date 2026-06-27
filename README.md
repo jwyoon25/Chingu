@@ -45,7 +45,7 @@ toolchain.
    ```
    Or build only: `./scripts/run.sh build` (equivalently `swift build` / `swift run`).
 
-3. **Use it:** press **⌃⌥⌘Space** (Control-Option-Command-Space) to toggle the overlay below the notch.
+3. **Use it:** press **⌃⌥⌘K** (Control-Option-Command-K) to toggle the overlay below the notch.
    Type a question and press Enter. Try a plain question (*"What is 49 × 52 + 10?"*) and a
    current-info one (*"What's the latest stable macOS version?"*) to see web search.
 
