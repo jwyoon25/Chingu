@@ -278,3 +278,29 @@ One `user` message, image block **before** the text block, base64 with **no newl
 - **Don't re-capture on every request** — capture on the Enter that starts a turn; follow-ups
   reuse history. Re-capturing on a follow-up the user didn't trigger breaks the §1 contract.
 - **For the API shape, use `/claude-api`** — never guess vision/SSE format from memory.
+
+---
+
+## 9. Known limitations & deferred optimizations (CP2 as shipped)
+
+CP2 meets every §6 acceptance criterion (correctness, context retention, permission path). The
+items below are **performance**, explicitly *out of CP2's acceptance scope* — tackle them in a
+dedicated optimization pass after CP2 merges.
+
+- **Per-turn latency grows with the number of screen questions.** The Messages API is stateless,
+  so the full thread — including every prior screenshot — is re-sent each turn, and without
+  prompt caching the model **re-prefills every one of those images** each time. Non-screen
+  questions also pay image-prefill because we always attach (the no-router design, §0). Observed
+  in testing: a fast first turn, then ~40s once several captures had accumulated in history.
+  - **This is not a system-prompt issue.** A system prompt cannot make the model skip processing
+    an attached image; vision prefill happens regardless. "The model ignores the image" means it
+    ignores it in the *answer*, not that it skips reading it.
+  - **Deferred fix (in `AnthropicClient`'s request-shape lane):** add `cache_control` prompt
+    caching to the image/history blocks so re-sent screenshots are read from cache — this removes
+    the compounding cost while **preserving** follow-up context (§6.6). Secondary levers: cap the
+    number of retained images, or shrink the long edge below 1568px. JPEG would cut upload bytes
+    but not vision-token prefill.
+- **Possible over-eager web search.** With the placeholder empty system prompt, the model may
+  invoke `web_search` for questions that don't need it, adding a round-trip. A future
+  system-prompt pass can steer it to "only search for current/external info" — the one latency
+  lever a prompt actually moves.
