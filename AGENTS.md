@@ -28,7 +28,7 @@ in parallel right now; CP3 (pointing) comes after CP2.
    `ChatViewModel.onAssistantResponseComplete` (reply hook). CP2 fills `image`; CP4 calls
    `submit(text:)` + sets the hook. Don't rename or re-sign them.
 4. **Anthropic/Claude code → use the `/claude-api` skill, never guess.** Model is
-   `claude-opus-4-8`. No Swift SDK; hand-written JSON + `URLSession` SSE.
+   `claude-haiku-4-5`. No Swift SDK; hand-written JSON + `URLSession` SSE.
 5. **Secrets:** only via `Secrets.value(...)`. Never hardcode, print, or commit a key. `.env` is
    gitignored.
 6. **No new SwiftPM dependencies** — system frameworks only. Ask the human if you think otherwise.

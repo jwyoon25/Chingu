@@ -8,7 +8,7 @@ technical decisions for each capability folded into the checkpoint that introduc
 system behavior**. The chat UI renders in SwiftUI via `NSHostingView`, hosted inside a
 non-activating AppKit `NSPanel`. This split is the standard, simplest path.
 
-**AI provider:** **Claude** (`claude-opus-4-8` — multimodal: brain, vision, and web search)
+**AI provider:** **Claude** (`claude-haiku-4-5` — multimodal: brain, vision, and web search)
 via the Anthropic Messages API.
 
 **Speech provider:** **ElevenLabs** for speech-to-text (STT) and text-to-speech (TTS), used in
@@ -85,7 +85,7 @@ The foundation: the overlay, the hotkey, and a working chat thread. No screensho
   top-center, just below the notch, at a high window level so it floats above other apps.
 - **The hotkey is a global hotkey** registered through AppKit/Carbon (`RegisterEventHotKey`, or a
   small wrapper like the `HotKey` package).
-- **LLM + web search:** Claude (`claude-opus-4-8`) via the **Anthropic Messages API with the
+- **LLM + web search:** Claude (`claude-haiku-4-5`) via the **Anthropic Messages API with the
   server-side `web_search` tool** (`web_search_20260209`). We declare the tool; Claude decides
   when to search, runs it on Anthropic's infrastructure, and returns a cited answer — no
   client-side search loop, least code, fastest to ship. (We deliberately avoid wiring our own
@@ -306,7 +306,7 @@ You're in Premiere and ask Chingu: *"How do I add a fading transition between sc
 |------|----------|---------------|
 | Overlay window | Non-activating `NSPanel` (SwiftUI inside via `NSHostingView`) | CP1 |
 | Hotkey | Global hotkey (AppKit/Carbon) | CP1 |
-| LLM + web search | Claude (`claude-opus-4-8`) Messages API + `web_search_20260209` tool | CP1 |
+| LLM + web search | Claude (`claude-haiku-4-5`) Messages API + `web_search_20260209` tool | CP1 |
 | Screenshot capture | ScreenCaptureKit with `excludingWindows:` | CP2 |
 | OCR/VLM pre-pass | None — single multimodal Claude call | CP2 |
 | YES/NO routing | Always attach screenshot; Claude uses or ignores | CP2 |

@@ -35,7 +35,7 @@ reported at launch but only consumed in CP4.
 When you touch anything Claude/Anthropic-shaped (request bodies, SSE streaming, image/vision
 blocks, tool use, model IDs), invoke the **`/claude-api` skill** for the authoritative current
 shape. Do **not** rely on training-prior memory for the API format. The model is
-`claude-opus-4-8` (multimodal — handles vision in CP2 with no model change). There is no official
+`claude-haiku-4-5` (multimodal — handles vision in CP2 with no model change). There is no official
 Anthropic Swift SDK; we hand-write the JSON request and parse SSE with `URLSession` (see
 `AnthropicClient.swift`).
 

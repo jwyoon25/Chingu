@@ -25,7 +25,7 @@ enum AnthropicError: LocalizedError {
 //
 // We hand-roll the request/response JSON rather than depend on an SDK: Anthropic
 // ships no Swift SDK, and the Messages API shape is small. Request/response shapes
-// follow the current Messages API (model claude-opus-4-8, streaming SSE, the
+// follow the current Messages API (model claude-haiku-4-5, streaming SSE, the
 // server-side web_search_20260209 tool). See docs/SPEC.md (CP1) and the claude-api skill.
 
 /// One message in the single chat thread. `content` holds API content blocks as
@@ -90,7 +90,7 @@ indirect enum JSONValue: Codable {
 /// Streaming client for the Anthropic Messages API. Owns no UI; callers drive it
 /// and receive deltas through the async `send` stream.
 actor AnthropicClient {
-    static let model = "claude-opus-4-8"
+    static let model = "claude-haiku-4-5"
     static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     static let anthropicVersion = "2023-06-01"
     static let maxTokens = 4096
@@ -309,6 +309,10 @@ actor AnthropicClient {
                 .object([
                     "type": .string("web_search_20260209"),
                     "name": .string("web_search"),
+                    // Haiku 4.5 lacks programmatic tool calling; the 20260209 search
+                    // tool defaults to code-execution callers for dynamic filtering.
+                    // Direct-only keeps web search working on the fast model.
+                    "allowed_callers": .array([.string("direct")]),
                 ])
             ]),
             // Automatic prompt caching: a top-level breakpoint that the API rolls
