@@ -197,9 +197,12 @@ Do **not** touch `onAssistantResponseComplete` (CP4's slot).
 
 Put any capture setup in `extension AppDelegate { }` inside `ScreenCapture.swift`, and add at
 most **one line** to `applicationDidFinishLaunching` (e.g. `setupCapture()`), per the
-`main.swift` split rule in `PARALLEL-CP2-CP4.md` §3c. The capture path needs **no** reference
-into the AppDelegate body: it excludes Chingu's windows by process ID (§4.1 step 3), so
-`panel.windowNumber` is never read and `main.swift`/`ChinguPanel` stay untouched.
+`main.swift` split rule in `PARALLEL-CP2-CP4.md` §3c. `setupCapture()` only **pre-warms the
+Screen Recording permission** at launch (a throwaway `SCShareableContent.current` call) so the
+system prompt appears up front rather than mid-question; the actual capture runs on Enter in
+`ChatViewModel.send()`. The capture path needs **no** reference into the AppDelegate body: it
+excludes Chingu's windows by process ID (§4.1 step 3), so `panel.windowNumber` is never read and
+`main.swift`/`ChinguPanel` stay untouched.
 
 ---
 

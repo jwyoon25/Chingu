@@ -10,6 +10,9 @@ struct ChatView: View {
         VStack(spacing: 0) {
             thread
             Divider()
+            if let notice = model.captureNotice {
+                captureBanner(notice)
+            }
             composer
         }
         .frame(width: 520, height: 520)            // fixed size; history scrolls
@@ -73,6 +76,24 @@ struct ChatView: View {
         .padding(.vertical, 8)
     }
 
+    /// Shown when a turn couldn't attach the screen (e.g. Screen Recording permission
+    /// is off). CP2 — the question still goes through text-only; this just explains why
+    /// the screen wasn't seen and how to fix it.
+    private func captureBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption)
+        .foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.orange.opacity(0.1))
+    }
+
     // MARK: Composer
 
     private var composer: some View {
@@ -128,6 +149,11 @@ private struct MessageRow: View {
                     .background(bubbleColor)
                     .foregroundStyle(message.role == .user ? Color.white : Color.primary)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                if message.role == .user, message.hasImage {
+                    Label("Screen attached", systemImage: "camera.viewfinder")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             if message.role == .assistant { Spacer(minLength: 40) }

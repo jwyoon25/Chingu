@@ -120,45 +120,12 @@ enum ScreenCapture {
 // line: `setupCapture()`.
 
 extension AppDelegate {
-    /// Wire up screen capture.
-    ///
-    /// **Build-order steps 1–2 (debug):** for now this takes a one-shot screenshot a
-    /// beat after launch, writes it to a temp file (step 1: eyeball that Chingu's
-    /// overlay is excluded), and sends it to Claude with a describe-the-screen prompt,
-    /// logging the reply (step 2: confirm the vision round-trip works). This debug path
-    /// is replaced by the Enter-key flow in `ChatViewModel.send()` in step 3.
+    /// Wire up screen capture. Capture itself runs on Enter (`ChatViewModel.send()`);
+    /// this only **pre-warms the Screen Recording permission** at launch, so the system
+    /// prompt appears up front rather than interrupting the user's first screen question.
+    /// Failures are swallowed — the real capture path surfaces a clear message if access
+    /// is still missing when a question is asked.
     func setupCapture() {
-        Task { @MainActor in
-            // Let the panel render first, so we can confirm it's excluded from the shot.
-            try? await Task.sleep(for: .seconds(2))
-            do {
-                let shot = try await ScreenCapture.capture()
-                let data = Data(base64Encoded: shot.base64) ?? Data()
-                let url = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("chingu-capture.png")
-                try data.write(to: url)
-                NSLog("Chingu CP2: debug capture (\(data.count) bytes) → \(url.path)")
-                await Self.debugVisionRoundTrip(shot)
-            } catch {
-                NSLog("Chingu CP2: capture failed — \(error.localizedDescription)")
-            }
-        }
-    }
-
-    /// Step-2 check: send the captured screenshot to Claude and log the reply, proving
-    /// the `image` content block reaches the model. Throwaway — removed when step 3
-    /// drives capture from the composer.
-    private static func debugVisionRoundTrip(_ shot: CapturedImage) async {
-        let client = AnthropicClient()
-        var reply = ""
-        for await event in await client.send(
-            "In one short sentence, describe what's shown on this screen.", image: shot) {
-            switch event {
-            case let .textDelta(delta): reply += delta
-            case let .failed(error): reply += "[failed: \(error.errorDescription ?? "?")]"
-            default: break
-            }
-        }
-        NSLog("Chingu CP2 vision test → \(reply)")
+        Task { _ = try? await SCShareableContent.current }
     }
 }

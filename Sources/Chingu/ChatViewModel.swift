@@ -11,6 +11,9 @@ struct ChatMessage: Identifiable, Equatable {
     var isStreaming: Bool = false
     /// True while Claude is running a server-side web search for this message.
     var isSearching: Bool = false
+    /// True when a screenshot was attached to this (user) turn — drives the small
+    /// "screen attached" hint on the bubble. CP2.
+    var hasImage: Bool = false
 }
 
 /// A screenshot to attach to a question. **CP2 placeholder** (the parallel-dev seam).
@@ -19,7 +22,7 @@ struct ChatMessage: Identifiable, Equatable {
 /// `image` content block — see `docs/CP2-SPEC.md`. It exists now (empty) only so the
 /// `submit(text:image:)` signature is locked once and never has to be reshaped later
 /// (see `docs/PARALLEL-CP2-CP4.md`). CP1/CP4 ignore it; passing `nil` is text-only.
-struct CapturedImage: Equatable {
+struct CapturedImage: Equatable, Sendable {
     /// PNG bytes, base64-encoded with **no** newlines — the `data` of the Claude
     /// `image` content block.
     let base64: String
@@ -36,6 +39,9 @@ final class ChatViewModel: ObservableObject {
     @Published var input: String = ""
     /// Disables the composer while a turn is in flight (one outstanding turn at a time).
     @Published private(set) var isResponding: Bool = false
+    /// Set when a turn couldn't attach the screen (e.g. Screen Recording permission is
+    /// off). The UI surfaces it as a banner; cleared on the next successful capture. CP2.
+    @Published private(set) var captureNotice: String?
 
     private let client = AnthropicClient()
 
@@ -53,12 +59,31 @@ final class ChatViewModel: ObservableObject {
     /// the field, then hands off to `submit(text:image:)`. Kept no-arg so `ChatView`'s
     /// `.onSubmit`/Button bindings don't change.
     ///
-    /// CP2 will capture a screenshot here before calling `submit` — see `docs/CP2-SPEC.md`.
+    /// CP2: the screen Chingu sees is the screen at the moment of Enter (CP2-SPEC §1).
+    /// Capture is async, so we clear the field instantly, await the shot, then submit.
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding else { return }
-        input = ""
-        submit(text: text)
+        input = ""   // clear immediately so the composer feels responsive
+        Task {
+            let shot = await captureScreen()
+            submit(text: text, image: shot)
+        }
+    }
+
+    /// Grabs the screen for this turn. Returns `nil` (and sets `captureNotice`) when the
+    /// shot is unavailable — e.g. Screen Recording permission is off — so the turn still
+    /// goes through text-only instead of blocking. Clears the notice on success.
+    private func captureScreen() async -> CapturedImage? {
+        do {
+            let shot = try await ScreenCapture.capture()
+            captureNotice = nil
+            return shot
+        } catch {
+            captureNotice = (error as? ScreenCapture.CaptureError)?.errorDescription
+                ?? "Couldn't capture the screen — answering without it."
+            return nil
+        }
     }
 
     /// The single entry point for every question — typed (`send()`), transcribed (CP4
@@ -66,18 +91,18 @@ final class ChatViewModel: ObservableObject {
     /// bubble and a streaming assistant bubble, then folds in deltas as they arrive.
     ///
     /// **Parallel-dev seam (`docs/PARALLEL-CP2-CP4.md`):** the `image` superset is locked
-    /// once so neither checkpoint reshapes the signature. `image` is accepted but **not yet
-    /// sent** — the client takes text only today; CP2 wires it through to the request.
+    /// once so neither checkpoint reshapes the signature. CP2 fills `image` (the screen
+    /// at Enter); CP4 calls `submit(text:)` and leaves it nil. `nil` ⇒ text-only.
     func submit(text rawText: String, image: CapturedImage? = nil) {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isResponding else { return }
         isResponding = true
 
-        messages.append(ChatMessage(role: .user, text: text))
+        messages.append(ChatMessage(role: .user, text: text, hasImage: image != nil))
         let assistantID = appendStreamingAssistant()
 
         Task {
-            for await event in await client.send(text) {
+            for await event in await client.send(text, image: image) {
                 switch event {
                 case let .textDelta(delta):
                     update(assistantID) {
