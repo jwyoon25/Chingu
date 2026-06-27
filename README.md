@@ -18,6 +18,14 @@ Chingu also has a **pointer interface** for instructional questions, guiding you
 
 To hedge against the risk of not having a finished product, we develop in **checkpoints**. If we don't complete a checkpoint, we film the demo using the last working checkpoint as a fallback. Each checkpoint is independently demoable.
 
+## Tech Stack
+
+- **Swift** — the app itself: mic capture, UI, and the notch overlay (SwiftUI for visuals, AppKit for window/panel/hotkey/system behavior).
+- **Claude** (`claude-opus-4-8`) — the brain: reasoning, vision (screenshot understanding), and web search.
+- **ElevenLabs** — the voice: speech-to-text and text-to-speech (Checkpoint 4).
+
+See [`docs/SPEC.md`](docs/SPEC.md) for the per-checkpoint technical decisions.
+
 ### Checkpoint 1 — Groundwork + working UI on Mac *(most important)*
 
 No screenshots yet. Get the core UI working:
