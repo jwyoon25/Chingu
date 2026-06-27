@@ -105,7 +105,7 @@ final class MicCapture {
     /// A call to `requestStop()` (e.g. a second tap) ends it early and returns what we have.
     func recordUntilSilence(
         silenceThreshold: Float = -40,
-        silenceDuration: TimeInterval = 1.1,
+        silenceDuration: TimeInterval = 0.7,
         onsetTimeout: TimeInterval = 6,
         maxDuration: TimeInterval = 30,
         onSpeechStart: (@MainActor () -> Void)? = nil
