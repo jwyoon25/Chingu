@@ -115,7 +115,11 @@ actor AnthropicClient {
     /// Append a user message and stream the assistant's reply. Yields text deltas as
     /// they arrive. The full assistant turn is committed to `history` when complete so
     /// follow-ups keep context. Handles the server-tool `pause_turn` by re-requesting.
-    func send(_ userText: String) -> AsyncStream<StreamEvent> {
+    ///
+    /// When `image` is set (CP2), an `image` content block is prepended to the user
+    /// turn — and because it lands in `history`, follow-ups keep the screenshot context
+    /// for free. `image == nil` is byte-for-byte today's text-only behaviour.
+    func send(_ userText: String, image: CapturedImage? = nil) -> AsyncStream<StreamEvent> {
         AsyncStream { continuation in
             let task = Task {
                 guard let key = self.apiKey else {
@@ -124,9 +128,9 @@ actor AnthropicClient {
                     return
                 }
 
-                self.history.append(WireMessage(role: "user", content: [
-                    .object(["type": .string("text"), "text": .string(userText)])
-                ]))
+                self.history.append(WireMessage(
+                    role: "user",
+                    content: Self.userContent(text: userText, image: image)))
 
                 do {
                     // Loop to follow `pause_turn`: the server-side web-search loop can
@@ -157,6 +161,26 @@ actor AnthropicClient {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Builds the user turn's content blocks. With an image attached, the `image`
+    /// block comes **first**, then the text (vision best practice). Without one, it's a
+    /// single text block — identical to the pre-CP2 request. Base64 is sent verbatim
+    /// (the encoder already produces unwrapped base64, no newlines).
+    private static func userContent(text: String, image: CapturedImage?) -> [JSONValue] {
+        var blocks: [JSONValue] = []
+        if let image {
+            blocks.append(.object([
+                "type": .string("image"),
+                "source": .object([
+                    "type": .string("base64"),
+                    "media_type": .string(image.mediaType),
+                    "data": .string(image.base64),
+                ]),
+            ]))
+        }
+        blocks.append(.object(["type": .string("text"), "text": .string(text)]))
+        return blocks
     }
 
     /// Performs one streaming request over the current `history` and returns the

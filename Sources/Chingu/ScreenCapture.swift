@@ -122,10 +122,11 @@ enum ScreenCapture {
 extension AppDelegate {
     /// Wire up screen capture.
     ///
-    /// **Build-order step 1 (debug):** for now this takes a one-shot screenshot a beat
-    /// after launch and writes it to a temp file so the result can be eyeballed (is
-    /// Chingu's overlay excluded?). This debug capture is replaced by the Enter-key
-    /// path in `ChatViewModel.send()` once that's wired (build-order step 3).
+    /// **Build-order steps 1–2 (debug):** for now this takes a one-shot screenshot a
+    /// beat after launch, writes it to a temp file (step 1: eyeball that Chingu's
+    /// overlay is excluded), and sends it to Claude with a describe-the-screen prompt,
+    /// logging the reply (step 2: confirm the vision round-trip works). This debug path
+    /// is replaced by the Enter-key flow in `ChatViewModel.send()` in step 3.
     func setupCapture() {
         Task { @MainActor in
             // Let the panel render first, so we can confirm it's excluded from the shot.
@@ -137,9 +138,27 @@ extension AppDelegate {
                     .appendingPathComponent("chingu-capture.png")
                 try data.write(to: url)
                 NSLog("Chingu CP2: debug capture (\(data.count) bytes) → \(url.path)")
+                await Self.debugVisionRoundTrip(shot)
             } catch {
                 NSLog("Chingu CP2: capture failed — \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Step-2 check: send the captured screenshot to Claude and log the reply, proving
+    /// the `image` content block reaches the model. Throwaway — removed when step 3
+    /// drives capture from the composer.
+    private static func debugVisionRoundTrip(_ shot: CapturedImage) async {
+        let client = AnthropicClient()
+        var reply = ""
+        for await event in await client.send(
+            "In one short sentence, describe what's shown on this screen.", image: shot) {
+            switch event {
+            case let .textDelta(delta): reply += delta
+            case let .failed(error): reply += "[failed: \(error.errorDescription ?? "?")]"
+            default: break
+            }
+        }
+        NSLog("Chingu CP2 vision test → \(reply)")
     }
 }
