@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:ChinguPlan}",
+            "name": "Debug Chingu",
+            "target": "Chingu",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Chingu"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:ChinguPlan}",
+            "name": "Release Chingu",
+            "target": "Chingu",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Chingu"
+        }
+    ]
+}
