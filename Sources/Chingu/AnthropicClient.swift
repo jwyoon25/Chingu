@@ -300,6 +300,14 @@ actor AnthropicClient {
                     "name": .string("web_search"),
                 ])
             ]),
+            // Automatic prompt caching: a top-level breakpoint that the API rolls
+            // forward as the thread grows, so the conversation prefix — crucially the
+            // prior screenshots (CP2) — is read from cache instead of re-prefilled
+            // every turn. That re-prefill is what made multi-turn latency balloon.
+            // Adding the newest image only invalidates from that block on; older images
+            // stay cached. Safe with our always-declared web_search (only *toggling* it
+            // would invalidate). See docs/CP2-SPEC.md §9.
+            "cache_control": .object(["type": .string("ephemeral")]),
         ]
         // Attach the (placeholder) system prompt only when non-empty — an empty
         // prompt omits the field entirely, so behaviour matches "no system prompt".

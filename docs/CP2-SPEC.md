@@ -281,26 +281,27 @@ One `user` message, image block **before** the text block, base64 with **no newl
 
 ---
 
-## 9. Known limitations & deferred optimizations (CP2 as shipped)
+## 9. Latency & quality optimizations (post-merge pass — done)
 
-CP2 meets every §6 acceptance criterion (correctness, context retention, permission path). The
-items below are **performance**, explicitly *out of CP2's acceptance scope* — tackle them in a
-dedicated optimization pass after CP2 merges.
+CP2 met every §6 acceptance criterion at merge. After merge, a follow-up pass on `main`
+addressed the latency/quality issues seen in testing (and reported on the CP4 branch). Both
+fixes live **outside CP4's file lane**, so they rebase cleanly for the in-flight speech work.
 
-- **Per-turn latency grows with the number of screen questions.** The Messages API is stateless,
+- **Per-turn latency grew with the number of screen questions.** The Messages API is stateless,
   so the full thread — including every prior screenshot — is re-sent each turn, and without
-  prompt caching the model **re-prefills every one of those images** each time. Non-screen
-  questions also pay image-prefill because we always attach (the no-router design, §0). Observed
-  in testing: a fast first turn, then ~40s once several captures had accumulated in history.
-  - **This is not a system-prompt issue.** A system prompt cannot make the model skip processing
-    an attached image; vision prefill happens regardless. "The model ignores the image" means it
-    ignores it in the *answer*, not that it skips reading it.
-  - **Deferred fix (in `AnthropicClient`'s request-shape lane):** add `cache_control` prompt
-    caching to the image/history blocks so re-sent screenshots are read from cache — this removes
-    the compounding cost while **preserving** follow-up context (§6.6). Secondary levers: cap the
-    number of retained images, or shrink the long edge below 1568px. JPEG would cut upload bytes
-    but not vision-token prefill.
-- **Possible over-eager web search.** With the placeholder empty system prompt, the model may
-  invoke `web_search` for questions that don't need it, adding a round-trip. A future
-  system-prompt pass can steer it to "only search for current/external info" — the one latency
-  lever a prompt actually moves.
+  caching the model **re-prefilled every one of those images** each time (observed: a fast first
+  turn, then ~40s once several captures had accumulated). *Not* a system-prompt issue — vision
+  prefill happens regardless of the prompt.
+  - **Fixed:** automatic prompt caching — a top-level `"cache_control": {"type": "ephemeral"}`
+    on the request (`AnthropicClient.encodeRequestBody`). The API rolls the breakpoint forward as
+    the thread grows, so the conversation prefix (including prior screenshots) is read from cache
+    instead of re-prefilled; only the newest image is processed fresh. Follow-up context (§6.6) is
+    preserved. `claude-opus-4-8`'s 1,024-token minimum means caching engages from the first image
+    turn; always-on `web_search` doesn't invalidate it (only *toggling* search would).
+- **Essay-like answers + over-eager web search** (felt most on the CP4 voice branch). These *are*
+  system-prompt issues.
+  - **Fixed:** `SystemPrompt.swift` replaced the CP1 placeholder with the real Chingu persona:
+    conversational brevity (no essays), **plain text / no Markdown** (which also retires the
+    overlay's literal-Markdown display bug — no renderer needed — and keeps CP4 TTS clean), and
+    search restraint ("only search for current/external info"). One prompt fixes tone, the
+    over-search round-trips, the spoken-answer length, and the Markdown bug at once.
