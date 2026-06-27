@@ -1,120 +1,136 @@
-# ChinguPlan
+# Chingu — Your AI Companion in the Notch
 
-## Hackathon Project Idea
+> *Press a hotkey. Ask anything. Chingu sees what you see.*
 
-**Chingu** is an AI companion that lives on your MacBook (Mac-native). It pops up as a chat overlay that can answer your questions. The main user-facing product is a floating, top-center overlay that appears at the top of your screen (just below the notch) at the press of a hotkey.
-
-There is only **one chat thread** — no "new chat" option, no context-refresh option, and only one session. If you quit the app, the session is erased and the context resets. The UI is a fixed height and width, and you can scroll through the chat history.
-
-## Problem & Solution
-
-As students, we use LLMs constantly. We often find ourselves switching between tabs, taking screenshots, explaining the situation in text, and ultimately wasting time feeding context to the LLM.
-
-Chingu cuts out this "middleman effort" by seeing what you see. It watches your screen, and when you have a question, you just ask — no screenshots, no context-prompting. Ask your question and get your answer.
-
-Chingu also has a **pointer interface** for instructional questions, guiding you exactly where to click to do something on your computer. (For the demo, this is limited to button-map navigation.)
-
-## Hackathon Strategy: Checkpoints
-
-To hedge against the risk of not having a finished product, we develop in **checkpoints**. If we don't complete a checkpoint, we film the demo using the last working checkpoint as a fallback. Each checkpoint is independently demoable.
-
-## Tech Stack
-
-- **Swift** — the app itself: mic capture, UI, and the notch overlay (SwiftUI for visuals, AppKit for window/panel/hotkey/system behavior).
-- **Claude** (`claude-opus-4-8`) — the brain: reasoning, vision (screenshot understanding), and web search.
-- **ElevenLabs** — the voice: speech-to-text and text-to-speech (Checkpoint 4).
-
-See [`docs/SPEC.md`](docs/SPEC.md) for the per-checkpoint technical decisions, and
-[`docs/CP1-SPEC.md`](docs/CP1-SPEC.md) for the Checkpoint 1 implementation detail.
-
-## Running (Checkpoint 1)
-
-Chingu (CP1) is a Swift Package — no Xcode project needed. Requires macOS 14+ and a recent Swift
-toolchain.
-
-1. **Add your API key** to a local `.env` (gitignored — never committed):
-   ```sh
-   cp .env.example .env
-   # then edit .env and set:  ANTHROPIC_API_KEY=sk-ant-...
-   ```
-   `ELEVENLABS_API_KEY` is for speech (Checkpoint 4) and can be left blank for now.
-
-2. **Build & run** with the helper script (loads `.env`, then `swift run`):
-   ```sh
-   ./scripts/run.sh
-   ```
-   Or build only: `./scripts/run.sh build` (equivalently `swift build` / `swift run`).
-
-3. **Use it:** press **⌃⌥⌘Space** (Control-Option-Command-Space) to toggle the overlay below the notch.
-   Press **⌃⌥⌘K** to ask by voice. Type a question and press Enter. Try a plain question (*"What is 49 × 52 + 10?"*) and a
-   current-info one (*"What's the latest stable macOS version?"*) to see web search.
-
-The app builds and launches **without** a key — it shows a "Setup needed" banner until
-`ANTHROPIC_API_KEY` is set. Keys are read at runtime via `ProcessInfo`, never hard-coded, and
-never printed in logs.
-
-### Checkpoint 1 — Groundwork + working UI on Mac *(most important)*
-
-No screenshots yet. Get the core UI working:
-
-- Press a hotkey to activate Chingu, which opens the notch overlay with a text input area and an Enter-to-send action.
-- The text box shows placeholder guidance (e.g. *"Write your question/prompt here"*) that disappears when the user starts typing.
-- The user can send questions and follow-ups and receive LLM responses in a chat thread.
-- One chat thread only — no "new chat" or "clear context" option. A single back-and-forth thread.
-- The LLM has no Chingu-specific prompt layer yet — it's just LLM chat and responses in your notch.
-- **Must support web search.**
-
-### Checkpoint 2 — Rudimentary screenshot feature
-
-Checkpoint 1, plus a screenshot captured when the user presses Enter.
-
-- The user can ask contextual questions such as *"What does this mean in English?"* or *"Summarize what's going on on my screen."*
-- Chingu answers in the popup, and the user can ask follow-ups.
-- Chingu does **not** give specific on-screen point-outs yet.
-- Chingu must determine, per question, **whether it needs to see the screenshot** to answer.
-
-### Checkpoint 3 — On-screen pointing
-
-**Checkpoint 3a:** Chingu gives specific instructions and shows the user exactly where to click (pointer, circle, etc.). Useful for questions like *"How do I bold this text?"* or *"How do I insert a transition?"*
-
-- It guides the user to click only the **first** button.
-- If there's an overflow menu with multiple steps, it outputs the remaining steps as a text tree for the user to follow.
-
-**Checkpoint 3b:** Multi-step version of 3a. To guide through an overflow menu with a sequence of clicks:
-
-1. Place a circle over the first button and instruct the user to ask "what's next" after clicking it.
-2. The user clicks the button (which opens more buttons), then asks "what's next," and the loop runs again.
-
-This is tricky: to type "what's next" into the chat, the user would normally click Chingu's text field — which steals focus and closes the menu they just opened, putting them back at square zero. We also can't have the LLM watch the screen frame-by-frame to detect the click. The click completion needs to be **explicitly signaled**. (See `docs/spec.md` for the solution.)
-
-### Checkpoint 4 — Speech integration
-
-- Chingu automatically detects when the user has finished asking a question and when they're asking a follow-up, via speech.
-- *(Optional)* Voice activation — *"야 친구!"* ("Hey Chingu!"), like "Hey Siri."
-- There's still a button to end the conversation.
-- Chingu also has text-to-speech to deliver its responses as speech.
-
-This makes conversation more fluid and removes the need to move the mouse and type — especially useful while following on-screen instructions.
-
-## Example Scenario
-
-You're using Adobe Premiere Pro and have a question. Traditionally, you'd take a screenshot, write context in the prompt, and ask in a web chat interface. With Chingu, you just ask — Chingu captures your screen when you ask, removing the context-prompting middleman.
-
-**Demo:** You have Premiere Pro open and ask Chingu: *"How do I add a fading transition between scene 1 and scene 2?"*
-
-1. Chingu captures a screenshot the moment you press Enter. (We tell the user explicitly: the screen Chingu sees is the screen at the moment you press Enter — so they know how to use it.) At capture time, Chingu only saves the screenshot; it runs no analysis (no LLM/VLM/OCR) yet.
-2. Chingu reads the prompt and decides whether it needs to see the screenshot.
-
-This is where the workflow diverges:
-
-**Route "NO"** — *e.g. "What time is it in Boston right now?"* or *"What is 49 × 52 + 10?"*
-The question doesn't need screen context. Chingu treats it as a plain LLM query (with web search if needed) and outputs the response in the notch chat thread.
-
-**Route "YES"** — *e.g. "How do I add a fading transition between scene 1 and scene 2?"*
-Chingu feeds the question and screenshot to the LLM and provides an answer.
-
-Within Route "YES," Chingu then decides whether the response needs a **cursor overlay** (e.g. guiding the user to click a specific button). If so, it feeds the screenshot to the LLM to identify the target control, locates its exact coordinates, and overlays a circle there.
+Chingu is a Mac-native AI companion that lives just below the notch. One global hotkey summons a floating chat overlay — no window switching, no tab juggling, no copy-pasting screenshots. It watches your screen, understands what you're looking at, and can point at the exact button you need to click.
 
 ---
 
-See [`docs/spec.md`](docs/spec.md) for resolved technical decisions on each of the open questions above.
+## Demo
+
+**You're in Adobe Premiere Pro and stuck on a transition.**
+
+- Old way: ⌘Tab → browser → take screenshot → paste → type context → wait.
+- With Chingu: press **⌃⌥⌘Space**, ask *"How do I add a fading transition between scene 1 and scene 2?"*, press Enter.
+
+Chingu captures your screen the moment you press Enter, sends it to Claude, and answers in the notch — with a circle drawn over the exact button to click. Say *"what's next"* and it guides you through the rest.
+
+---
+
+## Features
+
+| | Checkpoint | What it unlocks |
+|---|---|---|
+| ✅ | **CP1 — Chat** | Hotkey overlay, streaming Claude chat, web search |
+| ✅ | **CP2 — Vision** | Screenshot on Enter, screen-aware answers |
+| ✅ | **CP3 — Pointing** | Circle drawn over the exact control to click, multi-step guidance |
+| ✅ | **CP4 — Voice** | Speak your question, hear the answer; say "what's next" hands-free |
+
+### Why it doesn't steal focus
+
+The overlay is a **non-activating `NSPanel`** — it floats over your apps without ever becoming the active window. That's what makes CP3 work: the overflow menu you just opened stays open while Chingu draws a circle over it, because Chingu never interrupted the app behind it.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| App | Swift 6, SwiftUI + AppKit, macOS 14+ |
+| Brain | Claude (`claude-haiku-4-5`) — reasoning, vision, web search |
+| Screenshot | ScreenCaptureKit — captures display, excludes Chingu's own window |
+| Pointing | Pure vision — Claude reports pixel coords; app remaps + draws a click-through circle |
+| Voice | ElevenLabs STT + TTS; AVFoundation mic capture |
+| Hotkey | Carbon `RegisterEventHotKey` wrapper |
+
+No third-party Swift packages. System frameworks only.
+
+---
+
+## Running
+
+Requires **macOS 14+** and a recent Swift toolchain. No Xcode project — this is a Swift Package.
+
+### 1. Set your API keys
+
+```sh
+cp .env.example .env
+# Edit .env:
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   ELEVENLABS_API_KEY=...      # required for CP4 voice
+```
+
+### 2. Build & run
+
+```sh
+./scripts/run.sh
+```
+
+The script loads `.env`, exports the keys, and runs `swift run Chingu`. Build only: `./scripts/run.sh build`.
+
+### 3. Use it
+
+| Hotkey | Action |
+|---|---|
+| **⌃⌥⌘Space** | Toggle the notch overlay |
+| **⌃⌥⌘K** | Push-to-talk (voice input) |
+| **Enter** | Send message (captures a screenshot) |
+| **Advance hotkey** | Step to the next pointed control (CP3b, no-focus-change) |
+
+The app starts without a key and shows a setup banner until `ANTHROPIC_API_KEY` is present. Keys are never hardcoded, never logged, and never committed.
+
+---
+
+## Architecture
+
+```
+main.swift              NSApplication bootstrap, panel positioning, hotkey wiring
+ChinguPanel.swift       Non-activating NSPanel — the load-bearing piece
+ChatView.swift          SwiftUI chat UI (hosted in the panel via NSHostingView)
+ChatViewModel.swift     @MainActor view model; locked seam: submit(text:image:)
+AnthropicClient.swift   actor: builds requests, streams SSE, handles web search
+ScreenCapture.swift     ScreenCaptureKit capture, excludes Chingu's window
+ScreenArtifactFilter.swift  Content filter for clean captures
+PointTag.swift          Parses [POINT:x,y:label] tags out of Claude's reply
+PointingController.swift    Remaps pixel → screen point, manages circle lifecycle
+PointerOverlay.swift    Click-through NSPanel that draws the circle
+SpeechService.swift     ElevenLabs STT/TTS over URLSession
+MicCapture.swift        AVFoundation mic capture, streams audio to ElevenLabs
+VoiceController.swift   Orchestrates push-to-talk, silence detection, TTS playback
+GlobalHotKey.swift      Carbon hotkey wrapper
+Secrets.swift           Centralized key loading from environment
+SystemPrompt.swift      Chingu's system prompt
+```
+
+### How pointing works
+
+When Claude answers a "how do I…" question, it appends a single tag to its reply:
+
+```
+[POINT:842,156:Effects panel]
+```
+
+The app strips the tag before showing the text or reading it aloud, remaps the pixel coordinate to a screen point using the captured display's geometry, and draws a large forgiving circle in a click-through overlay that sits *over* the target app without blocking the click underneath. No Accessibility API, no OCR — pure vision.
+
+### How parallel development worked
+
+CP2 (screenshots) and CP4 (voice) were built simultaneously on separate branches off `main`. They meet at exactly two locked seams defined before either branch was cut:
+
+- **Input:** `ChatViewModel.submit(text:image:)` — typed questions, voice transcripts, and screenshot attachment all flow through here.
+- **Output:** `ChatViewModel.onAssistantResponseComplete` — fired with the final assistant text; CP4 hooks this to drive TTS.
+
+New capabilities live in new files. Merge order: CP2 first (it touches the request shape), then CP4 rebases.
+
+---
+
+## What's next (after the hackathon)
+
+- **Accessibility API fallback** for pixel-exact pointing on standard controls (the pure-vision path is a known approximation).
+- **Persistence** — today's session erases on quit; a lightweight SQLite log would make Chingu a longer-term companion.
+- **Proxy server** — keys bundled in a distributed Mac app are extractable; the real fix is a server-side proxy.
+- **Wake word** — *"야 친구!"* ("Hey Chingu!") for truly hands-free activation.
+
+---
+
+*Built at Cursor Hackathon Seoul by Team PlsDonateTokens.  
+Claude is the brain. ElevenLabs is the voice. Swift is the glue.*
