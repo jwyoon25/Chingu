@@ -47,13 +47,27 @@ struct ChatView: View {
         }
     }
 
+    @ViewBuilder
     private var emptyState: some View {
+        let missing = Secrets.missingRequiredKeys
         VStack(alignment: .leading, spacing: 6) {
             Text("Chingu")
                 .font(.headline)
-            Text("Ask anything. I can search the web when I need current info.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            if missing.isEmpty {
+                Text("Ask anything. I can search the web when I need current info.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                // Surface missing required keys up front, before the user even types,
+                // so setup is obvious on first launch. (Never shows key values.)
+                Label("Setup needed", systemImage: "key.slash")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.orange)
+                Text(Secrets.setupMessage(for: missing))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 8)

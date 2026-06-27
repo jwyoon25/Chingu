@@ -16,6 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // becomes the active app on its own — matching the non-activating overlay.
         NSApp.setActivationPolicy(.accessory)
 
+        // Log key PRESENCE only (never values) so it's clear at launch what's loaded.
+        // ELEVENLABS_API_KEY is read here for CP4 readiness but not yet consumed.
+        for key in Secrets.Key.allCases {
+            NSLog("Chingu: \(key.rawValue) \(Secrets.isPresent(key) ? "loaded" : "not set")")
+        }
+
         panel = ChinguPanel(rootView: ChatView(model: model))
         positionBelowNotch()
 

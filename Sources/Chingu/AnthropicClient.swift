@@ -10,11 +10,9 @@ enum AnthropicError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return """
-            No API key found. Set the ANTHROPIC_API_KEY environment variable, then relaunch Chingu.
-            (In Xcode: Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables. \
-            From a terminal: export ANTHROPIC_API_KEY="sk-ant-..." before running.)
-            """
+            // Reuse the centralized setup copy so the .env / run.sh instructions
+            // live in one place.
+            return Secrets.setupMessage(for: [.anthropic])
         case let .badStatus(code, body):
             return "Anthropic API returned HTTP \(code). \(body)"
         case let .transport(message):
@@ -103,9 +101,7 @@ actor AnthropicClient {
 
     /// Reads the key fresh each call from the environment. Never logged, never stored.
     private var apiKey: String? {
-        let key = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
-        guard let key, !key.isEmpty else { return nil }
-        return key
+        Secrets.value(.anthropic)
     }
 
     /// Events surfaced to the UI as a Claude turn streams in.

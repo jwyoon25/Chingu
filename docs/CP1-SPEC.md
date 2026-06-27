@@ -59,24 +59,29 @@ concern). Use a recent Swift toolchain.
 
 ## 2. Project setup
 
-The repo at `/Users/jaydenyoon/Developer/ChinguPlan` currently has **no Xcode project**.
+The repo at `/Users/jaydenyoon/Developer/ChinguPlan` had **no Xcode project**.
 
-1. Create a **macOS App** target named **`Chingu`** (SwiftUI lifecycle, Swift) inside this repo.
-2. **Do not create a nested git repository** — the repo already exists.
-3. If a valid `.xcodeproj` cannot be generated reliably from the command line, either:
-   - produce a **Swift Package Manager** executable target (`Package.swift`) that builds a
-     macOS app, **or**
-   - stop and give the user precise Xcode "New Project" click-steps.
-   State clearly which path you took and why.
-4. Verify `.gitignore` (already present) covers `xcuserdata/`, `DerivedData/`, `.build/`, and
-   secret files. Extend it if the chosen project layout adds new artifact paths.
+**What was built: a Swift Package Manager executable target.** `Package.swift` defines an
+executable target named `Chingu` (macOS 14+) that builds a real macOS app via `swift build`.
+This is the sanctioned fallback from the original brief, chosen because:
+- `xcodegen` is not installed and hand-writing a valid `.xcodeproj` from the CLI is fragile,
+  whereas `swift build` is deterministic and works headlessly (so an agent can build/run it).
+- The non-activating panel + global hotkey want **manual `NSApplication` control** (an accessory
+  app bootstrapped from `main.swift`), not the `@main App` SwiftUI lifecycle — so SwiftPM is in
+  fact the cleaner fit, not just a fallback.
+
+Notes that still hold:
+- **No nested git repository** — the existing repo is reused.
+- `.gitignore` covers `xcuserdata/`, `DerivedData/`, `.build/`, and secret files (`.env`,
+  `.env.*`), with `!.env.example` so the placeholder template is still tracked.
+- Build: `swift build`. Run: `./scripts/run.sh` (loads `.env`, then `swift run`). See §6.
 
 ### App lifecycle note
-This app should behave like a menu-bar / accessory utility, not a standard windowed app:
-- It has **no main window** at launch — the overlay panel is the only surface.
-- Consider `NSApplication.setActivationPolicy(.accessory)` so there's no Dock icon / menu bar
-  app, or a menu-bar (`NSStatusItem`) presence. For CP1, `.accessory` + hotkey-to-toggle is the
-  cleanest. (A status item showing "Chingu" with a quit option is a nice-to-have, not required.)
+Chingu behaves like a menu-bar / accessory utility, not a standard windowed app:
+- **No main window** at launch — the overlay panel is the only surface.
+- `main.swift` calls `NSApplication.setActivationPolicy(.accessory)` (no Dock icon) and drives
+  `NSApplication` manually. For CP1, `.accessory` + hotkey-to-toggle is the implementation. (A
+  `NSStatusItem` with a quit option is a nice-to-have, not built.)
 
 ---
 
