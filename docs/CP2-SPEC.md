@@ -30,9 +30,11 @@ the parallel-dev contract [`PARALLEL-CP2-CP4.md`](PARALLEL-CP2-CP4.md) first.
 
 ## 1. The capture contract (state it to the user)
 
-**The screen Chingu sees is the screen at the moment you press Enter.** Capture happens
-synchronously on send, before the request goes out. This removes all ambiguity about *what*
-Chingu is looking at. At capture time Chingu only grabs the image — no analysis.
+**The screen Chingu sees is the screen at the moment you press Enter.** ScreenCaptureKit's
+capture API is `async`, so capture is *awaited* on send: the composer field clears instantly,
+then the (sub-100ms) capture completes and the request goes out with the image already attached.
+The user never sees a half-sent turn. This removes all ambiguity about *what* Chingu is looking
+at. At capture time Chingu only grabs the image — no analysis.
 
 ---
 
@@ -40,11 +42,12 @@ Chingu is looking at. At capture time Chingu only grabs the image — no analysi
 
 | Concern | Choice |
 |---|---|
-| Capture | **ScreenCaptureKit** — `SCScreenshotManager.captureImage(contentFilter:configuration:)` |
-| Overlay exclusion | `SCContentFilter(display:excludingWindows:)` — pass Chingu's panel window |
-| Image encoding | `CGImage` → PNG via `NSBitmapImageRep` → base64 (no newlines) |
+| Capture | **ScreenCaptureKit** — `SCScreenshotManager.captureImage(contentFilter:configuration:)` (async) |
+| Overlay exclusion | `SCContentFilter(display:excludingWindows:)` — exclude **all** windows owned by Chingu's own process (match `SCWindow.owningApplication?.processID` to our PID), not one tracked window |
+| Image encoding | downscale to a **long edge ≤ 1568px** (aspect preserved), then `CGImage` → PNG via `NSBitmapImageRep` → base64 (no newlines) |
+| Image limits | direct Claude API: **≤ 10 MB base64 / image**. `claude-opus-4-8` is the high-res tier (long edge ≤ 2576px), but the image is re-sent in `history` every turn, so we cap at 1568px to bound payload + per-turn vision tokens |
 | Vision call | Same Messages API, `claude-opus-4-8` (already multimodal), add an `image` content block |
-| Permission | **Screen Recording (TCC)** — one-time system prompt, expected |
+| Permission | **Screen Recording (TCC)** — one-time system prompt; first grant may need an app relaunch |
 
 Minimum target stays **macOS 14+** (`Package.swift` already declares `.macOS(.v14)`;
 ScreenCaptureKit's modern API path needs 14). No new SwiftPM dependencies — ScreenCaptureKit
@@ -62,8 +65,8 @@ New logic goes in **new files** so it can't merge-conflict with CP4:
 ```
 Sources/Chingu/
   ScreenCapture.swift   — NEW. ScreenCaptureKit wrapper: capture the active display,
-                          exclude Chingu's panel, return a CapturedImage. Owns the
-                          extension AppDelegate { setupCapture/permission } block too.
+                          exclude Chingu's own windows (by PID), return a CapturedImage. Owns
+                          the extension AppDelegate { setupCapture/permission } block too.
   ChatViewModel.swift   — EDIT. Flesh out CapturedImage; fill the `image` arg in submit();
                           pass it to the client.
   AnthropicClient.swift — EDIT. Accept an optional image on the send path; add the image
@@ -71,8 +74,9 @@ Sources/Chingu/
 ```
 
 **Files you may touch (CP2 lane):** `ScreenCapture.swift` (new), `ChatViewModel.swift`
-(image slot only), `AnthropicClient.swift`, and a read of the panel window from `main.swift` /
-`ChinguPanel`. **Never touch:** `onAssistantResponseComplete`, any speech file (CP4's lane).
+(image slot only), `AnthropicClient.swift`. **No edit to `main.swift`/`ChinguPanel` is needed** —
+excluding by process ID (below) means we never read `panel.windowNumber`. **Never touch:**
+`onAssistantResponseComplete`, any speech file (CP4's lane).
 
 ---
 
@@ -93,18 +97,29 @@ struct CapturedImage {
 
 **Capture flow:**
 1. `let content = try await SCShareableContent.current` — get displays + windows.
-2. Pick the display under the panel (or `SCShareableContent`'s main display).
-3. Find Chingu's `SCWindow` by matching `windowID` to the panel's `windowNumber`
-   (the AppDelegate owns `panel`; read `panel.windowNumber`).
-4. `let filter = SCContentFilter(display: display, excludingWindows: [chinguWindow])`.
-5. `let config = SCStreamConfiguration()` — set `width`/`height` to the display's pixel size
-   (`display.width * scale`); keep `showsCursor` per taste (cursor not needed for Q&A).
+2. Pick the display to shoot: take the **active screen** (`NSScreen.main`), read its
+   `CGDirectDisplayID` from `deviceDescription[.init("NSScreenNumber")]`, and find the matching
+   `SCDisplay` (`content.displays.first { $0.displayID == screenNumber }`); fall back to
+   `content.displays.first`. Pinning the display avoids shooting the wrong monitor.
+3. **Exclude Chingu's own windows by process, not by a tracked window number.** `AppDelegate.panel`
+   is `private` (file-scoped) and the capture code lives in a *separate* file, so it can't read
+   `panel.windowNumber` — and it doesn't need to:
+   ```swift
+   let mine = ProcessInfo.processInfo.processIdentifier
+   let chinguWindows = content.windows.filter { $0.owningApplication?.processID == mine }
+   ```
+   This catches every Chingu window and needs no reference into the AppDelegate body.
+4. `let filter = SCContentFilter(display: display, excludingWindows: chinguWindows)`.
+5. `let config = SCStreamConfiguration()` — set `width`/`height` to the capture size. Compute the
+   display's pixel size (`display.width * scale`), then **downscale so the long edge ≤ 1568px**
+   (aspect preserved) and pass those dimensions; SCScreenshotManager renders to that size.
+   `showsCursor = false` (cursor not needed for Q&A).
 6. `let cgImage = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)`.
 7. Encode: `NSBitmapImageRep(cgImage:)` → `.representation(using: .png, properties: [:])` →
    `.base64EncodedString()`. Return `CapturedImage(base64:, mediaType: "image/png")`.
 
 **Why this excludes the overlay cleanly:** `excludingWindows:` composites the display *minus*
-Chingu's window, so we photograph what's *behind* the overlay without hiding it. Because the
+Chingu's own windows, so we photograph what's *behind* the overlay without hiding it. Because the
 panel is non-activating (CP1), the app behind stays active at capture time — no flicker, no
 focus change.
 
@@ -112,23 +127,30 @@ focus change.
 - First capture triggers the system prompt. Handle the not-yet-authorized path: if
   `SCShareableContent.current` throws / returns nothing, surface a clear in-chat message
   ("Chingu needs Screen Recording permission — enable it in System Settings › Privacy &
-  Security › Screen Recording, then try again") instead of crashing.
+  Security › Screen Recording, then **quit and reopen Chingu**") instead of crashing.
+- macOS often won't apply a *first* Screen Recording grant until the app is relaunched — so the
+  message says "reopen," not just "try again." Subsequent runs are silent.
 - This is a CP2-only TCC prompt, distinct from CP4's Microphone prompt — no shared code.
 
 ### 4.2 `AnthropicClient.swift` — add the image content block
 
 The user message currently sends one text block. Add an optional image:
-- Thread an optional `image: CapturedImage?` down the `send` path (e.g.
-  `func send(_ userText: String, image: CapturedImage? = nil)`).
-- In `encodeRequestBody()` / where the user `WireMessage` is built, when `image != nil`,
-  build the content array with the **image block first, then text** (vision best practice):
+- Thread an optional `image: CapturedImage?` down the `send` path:
+  `func send(_ userText: String, image: CapturedImage? = nil)`.
+- **Attach the block where the user `WireMessage` is built — in `send()` (today's lines
+  127–129), not in `encodeRequestBody()`.** `encodeRequestBody()` only maps the *existing*
+  `history` into JSON; it never constructs the user block. Building the image block at the
+  `history.append(WireMessage(role: "user", …))` site is also what puts the image *into history*,
+  so follow-ups keep the screenshot context for free (see the History note below).
+- When `image != nil`, build the content array with the **image block first, then text** (vision
+  best practice):
   ```swift
-  // user content blocks when an image is attached
+  // user content blocks when an image is attached (built in send(), at the history.append site)
   [
     .object(["type": .string("image"),
              "source": .object([
                "type": .string("base64"),
-               "media_type": .string(image.mediaType),   // "image/png"
+               "media_type": .string(image.mediaType),   // "image/png" — must match the bytes exactly
                "data": .string(image.base64),
              ])]),
     .object(["type": .string("text"), "text": .string(userText)]),
@@ -148,10 +170,24 @@ The user message currently sends one text block. Add an optional image:
 
 This is the seam the contract reserved. Minimal edit:
 - In `submit(text:image:)`, when sending, pass `image` to the client (`client.send(text, image:)`).
-- The composer path captures the screen on Enter: `send()` (no-arg) calls
-  `ScreenCapture.capture()` then `submit(text: trimmed, image: shot)`. If capture fails
-  (permission), either submit text-only with an inline note, or block with the permission
-  message — pick one; text-only-with-note is the gentler default.
+  `image` is already a parameter — fill it; do **not** re-sign the function.
+- The composer path captures the screen on Enter. Capture is `async`, so `send()` stays no-arg but
+  clears the field synchronously (responsive) and awaits the shot before submitting:
+  ```swift
+  func send() {
+      let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !text.isEmpty, !isResponding else { return }
+      input = ""                                       // clear instantly
+      Task {
+          let shot = try? await ScreenCapture.capture()   // sub-100ms; nil if it fails
+          submit(text: text, image: shot)                 // user bubble appears here
+      }
+  }
+  ```
+  If capture fails (permission denied), `shot` is `nil` and we submit **text-only** — the gentler
+  default over blocking the turn. Optionally surface a tiny UI-only hint that the screen wasn't
+  attached; do **not** inject that note into the prompt text sent to Claude. (`submit` runs on the
+  MainActor as today.)
 - Optionally set `ChatMessage` to carry a small "📷 screen attached" flag for the user bubble
   (cosmetic; keep it tiny — full visual polish is a later pass, per the working agreement).
 
@@ -161,9 +197,9 @@ Do **not** touch `onAssistantResponseComplete` (CP4's slot).
 
 Put any capture setup in `extension AppDelegate { }` inside `ScreenCapture.swift`, and add at
 most **one line** to `applicationDidFinishLaunching` (e.g. `setupCapture()`), per the
-`main.swift` split rule in `PARALLEL-CP2-CP4.md` §3c. The capture code needs the panel's
-window reference — the AppDelegate already holds `panel`; expose `panel.windowNumber` to the
-capture call. Don't restructure the panel.
+`main.swift` split rule in `PARALLEL-CP2-CP4.md` §3c. The capture path needs **no** reference
+into the AppDelegate body: it excludes Chingu's windows by process ID (§4.1 step 3), so
+`panel.windowNumber` is never read and `main.swift`/`ChinguPanel` stay untouched.
 
 ---
 
@@ -181,7 +217,14 @@ One `user` message, image block **before** the text block, base64 with **no newl
 }
 ```
 
-- `media_type` ∈ `image/png` (what we encode), also accepts `image/jpeg`, `image/gif`, `image/webp`.
+- `media_type` ∈ `image/png` (what we encode) — must match the bytes **exactly** (`image/png`,
+  not `image/jpg`). The API also accepts `image/jpeg`, `image/gif`, `image/webp`.
+- **Limits / cost (verified against the Vision docs).** ≤ 10 MB base64 per image on the direct
+  Claude API. `claude-opus-4-8` is the high-res tier (long edge ≤ 2576px), and oversized images
+  are downscaled server-side (aspect preserved). Because the image stays in `history` and is
+  re-sent every turn, we downscale on capture to **≤ 1568px long edge** (plenty for screen
+  text/UI; 2576 only helps dense detail) — this bounds payload, latency, and per-turn vision
+  tokens (~1.5k at 1568px vs ~4.8k at full high-res).
 - Vision is on `claude-opus-4-8` with **no beta header** and no model change.
 - Keep `max_tokens` at 4096 and `stream: true` — unchanged from CP1.
 - Always attach (no router) — `SPEC.md` §CP2: one round-trip, model uses or ignores the image.
@@ -216,10 +259,16 @@ One `user` message, image block **before** the text block, base64 with **no newl
 
 ## 8. Known gotchas
 
-- **`excludingWindows:` needs the right `SCWindow`.** Match on the panel's `windowNumber`;
-  if you exclude the wrong window you'll either photograph the overlay or miss content.
-- **TCC permission is async and sticky.** The first run prompts; subsequent runs are silent.
-  Test the denied state by toggling the permission off in System Settings.
+- **Exclude by process, not a tracked window.** `AppDelegate.panel` is `private` (file-scoped),
+  so the capture code in `ScreenCapture.swift` can't read `panel.windowNumber`. Filter
+  `content.windows` to those whose `owningApplication?.processID` is our PID and exclude all of
+  them — robust, and needs no AppDelegate reference.
+- **TCC permission is async, sticky, and may need a relaunch.** The first run prompts; the grant
+  often doesn't take effect until Chingu is reopened. Subsequent runs are silent. Test the denied
+  state by toggling the permission off in System Settings.
+- **Downscale before encoding.** A full-res Retina screenshot is multi-MB and gets downscaled
+  server-side anyway — and it's re-sent in `history` every turn. Cap the `SCStreamConfiguration`
+  output at a 1568px long edge.
 - **Base64 must have no newlines** — `base64EncodedString()` with default options is fine;
   don't use line-wrapping options.
 - **Image-first ordering** — put the image block before the text block in `content`.
