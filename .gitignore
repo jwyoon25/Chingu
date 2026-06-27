@@ -1,0 +1,15 @@
+# Secrets — never commit API keys
+.env
+.env.*
+Secrets.xcconfig
+Secrets.plist
+Secrets.swift
+*.secret
+
+# Xcode / Swift
+.DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
+build/
+.build/
