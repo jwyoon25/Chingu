@@ -70,7 +70,8 @@ The foundation: the overlay, the hotkey, and a working chat thread. No screensho
 - The user sends questions and follow-ups and receives LLM responses in a chat thread.
 - **One chat thread only** — no "new chat" or "clear context." A single back-and-forth thread,
   scrollable, fixed size.
-- No Chingu-specific prompt layer yet — plain LLM chat and responses in the notch.
+- No real Chingu-specific prompt layer yet — only a **placeholder** system prompt is wired in
+  (plumbing for the future persona/behavior layer); CP1 is otherwise plain LLM chat in the notch.
 - **Must support web search.**
 
 ### How it works

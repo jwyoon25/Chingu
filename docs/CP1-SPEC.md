@@ -24,7 +24,8 @@ document holds the implementation detail.
 - No on-screen pointing, circles, or Accessibility API (CP3).
 - No speech, mic, STT, or TTS (CP4).
 - No "new chat" / "clear context" button — **one thread only**.
-- No Chingu-specific system prompt / persona layer — plain chat for now.
+- No *real* Chingu persona / behavior system prompt — a **placeholder** system prompt is wired in
+  (the plumbing), but its content is a stub to be replaced in a later checkpoint. Plain chat for now.
 - No persistence — quitting the app erases the session.
 - No settings UI, no onboarding, no multi-window.
 
@@ -107,6 +108,8 @@ Sources/Chingu/
   ChatMessage              — model (id, role, text, isStreaming, isSearching) — in ChatViewModel.swift
   AnthropicClient.swift    — actor: builds the request, streams SSE, yields deltas; also the
                              JSONValue request/response model and SSE block assembler
+  SystemPrompt.swift       — the (placeholder) system-prompt constant; attached to the request
+                             only when non-empty
   Secrets.swift            — centralized key loading from the environment (ANTHROPIC_API_KEY,
                              ELEVENLABS_API_KEY); never logs/prints values
 ```
@@ -172,6 +175,7 @@ trigger the setup banner. Launch logs presence only (`ELEVENLABS_API_KEY loaded`
     "model": "claude-opus-4-8",
     "max_tokens": 4096,
     "stream": true,
+    "system": "…(placeholder — omitted when empty)…",
     "tools": [{ "type": "web_search_20260209", "name": "web_search" }],
     "messages": [ { "role": "user", "content": "..." }, ... ]
   }
@@ -180,6 +184,13 @@ trigger the setup banner. Launch logs presence only (`ELEVENLABS_API_KEY loaded`
   `URLSession.bytes(for:)`, parsing `event:` / `data:` lines. Append `text_delta` chunks to the
   current assistant message as they arrive.
 - **`max_tokens`:** 4096 is fine for CP1 chat (streaming, so no timeout concern). Don't lowball.
+
+**System prompt (placeholder):** the prompt text lives in `SystemPrompt.swift` as a single
+constant. `encodeRequestBody()` attaches it as the top-level `system` field **only when it is
+non-empty** — so a blank placeholder sends no `system` field and behaves exactly like having none.
+The content is a deliberate stub for CP1; the real Chingu persona/behavior/formatting guidance is a
+later-checkpoint job. (This is where a future "reply in plain text, no Markdown" instruction would
+go, if formatting is ever handled at the source rather than in the UI.)
 
 **Conversation history:** the API is **stateless** — send the full message thread on every
 request (all prior user + assistant turns), not just the latest message. `ChatViewModel` keeps

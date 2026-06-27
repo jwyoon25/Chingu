@@ -265,7 +265,7 @@ actor AnthropicClient {
                 "content": .array(msg.content),
             ])
         }
-        let body: JSONValue = .object([
+        var fields: [String: JSONValue] = [
             "model": .string(Self.model),
             "max_tokens": .number(Double(Self.maxTokens)),
             "stream": .bool(true),
@@ -276,8 +276,14 @@ actor AnthropicClient {
                     "name": .string("web_search"),
                 ])
             ]),
-        ])
-        return try JSONEncoder().encode(body)
+        ]
+        // Attach the (placeholder) system prompt only when non-empty — an empty
+        // prompt omits the field entirely, so behaviour matches "no system prompt".
+        let systemPrompt = SystemPrompt.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !systemPrompt.isEmpty {
+            fields["system"] = .string(systemPrompt)
+        }
+        return try JSONEncoder().encode(JSONValue.object(fields))
     }
 
     /// Clears the in-memory thread. (Not surfaced in CP1 UI — no "new chat" — but
