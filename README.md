@@ -24,7 +24,34 @@ To hedge against the risk of not having a finished product, we develop in **chec
 - **Claude** (`claude-opus-4-8`) — the brain: reasoning, vision (screenshot understanding), and web search.
 - **ElevenLabs** — the voice: speech-to-text and text-to-speech (Checkpoint 4).
 
-See [`docs/SPEC.md`](docs/SPEC.md) for the per-checkpoint technical decisions.
+See [`docs/SPEC.md`](docs/SPEC.md) for the per-checkpoint technical decisions, and
+[`docs/CP1-SPEC.md`](docs/CP1-SPEC.md) for the Checkpoint 1 implementation detail.
+
+## Running (Checkpoint 1)
+
+Chingu (CP1) is a Swift Package — no Xcode project needed. Requires macOS 14+ and a recent Swift
+toolchain.
+
+1. **Add your API key** to a local `.env` (gitignored — never committed):
+   ```sh
+   cp .env.example .env
+   # then edit .env and set:  ANTHROPIC_API_KEY=sk-ant-...
+   ```
+   `ELEVENLABS_API_KEY` is for speech (Checkpoint 4) and can be left blank for now.
+
+2. **Build & run** with the helper script (loads `.env`, then `swift run`):
+   ```sh
+   ./scripts/run.sh
+   ```
+   Or build only: `./scripts/run.sh build` (equivalently `swift build` / `swift run`).
+
+3. **Use it:** press **⌃⌥⌘Space** (Control-Option-Command-Space) to toggle the overlay below the notch.
+   Type a question and press Enter. Try a plain question (*"What is 49 × 52 + 10?"*) and a
+   current-info one (*"What's the latest stable macOS version?"*) to see web search.
+
+The app builds and launches **without** a key — it shows a "Setup needed" banner until
+`ANTHROPIC_API_KEY` is set. Keys are read at runtime via `ProcessInfo`, never hard-coded, and
+never printed in logs.
 
 ### Checkpoint 1 — Groundwork + working UI on Mac *(most important)*
 

@@ -40,15 +40,16 @@ is a hackathon MVP.
 | Language | Swift |
 | Visual UI | SwiftUI |
 | Window / overlay | AppKit `NSPanel` (non-activating), SwiftUI hosted via `NSHostingView` |
-| Global hotkey | Carbon `RegisterEventHotKey`, **or** the `HotKey` SwiftPM package (thin wrapper — acceptable) |
+| Global hotkey | Carbon `RegisterEventHotKey` (built — no dependency). The `HotKey` SwiftPM package was an acceptable alternative but wasn't needed. |
 | Networking | `URLSession` (native) — **no Alamofire, no third-party HTTP** |
 | AI | Claude `claude-opus-4-8`, Anthropic **Messages API**, raw HTTPS (no Swift SDK exists) |
 | Streaming | SSE over `URLSession.bytes(for:)` |
 | Web search | Server-side tool `web_search_20260209` declared in the request |
 | Secret | `ANTHROPIC_API_KEY` from `ProcessInfo.processInfo.environment` |
 
-Minimum target: **macOS 13+** is fine for CP1 (ScreenCaptureKit's 14+ requirement is a CP2
-concern). Use a recent Swift toolchain.
+Minimum target: **macOS 14+** (`Package.swift` declares `.macOS(.v14)`). CP1 alone would run on
+13, but we set 14 now so CP2's ScreenCaptureKit requirement doesn't force a later bump. Use a
+recent Swift toolchain (built with Swift 6.x).
 
 > **There is no official Anthropic Swift SDK.** You hand-write the JSON request and parse the
 > SSE stream with `URLSession`. This is expected and simple. If unsure of the exact current
@@ -87,35 +88,42 @@ Chingu behaves like a menu-bar / accessory utility, not a standard windowed app:
 
 ## 3. Architecture & file layout
 
-Keep it small. A reasonable layout (adapt names as needed, but keep these responsibilities
-separate):
+The build keeps responsibilities separate but uses a flat `Sources/Chingu/` layout (SwiftPM
+target) rather than nested folders. **As built:**
 
 ```
-Chingu/
-  ChinguApp.swift          — @main app entry, activation policy, wiring
-  AppDelegate.swift        — NSApplicationDelegate: owns panel + hotkey lifecycle
-  Overlay/
-    OverlayPanel.swift     — the non-activating NSPanel subclass + positioning
-    OverlayController.swift — shows/hides/toggles the panel, hosts SwiftUI via NSHostingView
-  Hotkey/
-    HotkeyManager.swift    — registers the global hotkey, calls a toggle closure
-  UI/
-    ChatView.swift         — SwiftUI: message list + input field
-    ChatViewModel.swift    — @MainActor ObservableObject: holds messages, drives the API
-    Message.swift          — model: id, role (user/assistant), text, isStreaming
-  API/
-    AnthropicClient.swift  — builds the request, streams the SSE response, yields deltas
-    AnthropicModels.swift  — Codable request/response/SSE-event structs
+Package.swift              — SwiftPM executable target "Chingu" (macOS 14+)
+.env.example               — placeholder secrets template (committed; copy to .env)
+scripts/run.sh             — loads .env, then `swift run` (never prints key values)
+Sources/Chingu/
+  main.swift               — entry point: NSApplication bootstrap (.accessory), creates the
+                             panel, positions it below the notch, registers the hotkey, toggles
+  ChinguPanel.swift        — the non-activating NSPanel subclass (canBecomeKey/Main, level,
+                             collectionBehavior) hosting SwiftUI via NSHostingView
+  GlobalHotKey.swift       — Carbon RegisterEventHotKey wrapper, main-actor isolated
+  ChatView.swift           — SwiftUI: message list + composer; shows the setup banner when a
+                             required key is missing
+  ChatViewModel.swift      — @MainActor ObservableObject: holds messages, drives the client
+  ChatMessage              — model (id, role, text, isStreaming, isSearching) — in ChatViewModel.swift
+  AnthropicClient.swift    — actor: builds the request, streams SSE, yields deltas; also the
+                             JSONValue request/response model and SSE block assembler
+  Secrets.swift            — centralized key loading from the environment (ANTHROPIC_API_KEY,
+                             ELEVENLABS_API_KEY); never logs/prints values
 ```
 
-**State ownership:** `ChatViewModel` is the single source of truth for the message thread and
-the in-flight request. `OverlayController` owns the panel. `HotkeyManager` owns the hotkey and
-just calls `OverlayController.toggle()`. `AnthropicClient` is stateless except for the request
-it's currently streaming.
+Deviations from the original suggested layout (all permitted by "adapt names as needed, keep
+responsibilities separate"): `OverlayController`'s show/hide/position duties live in `main.swift`'s
+app delegate; the request/response Codable structs are folded into `AnthropicClient.swift` as a
+small `JSONValue` enum (we hand-roll JSON, so there are no generated model structs); `Secrets.swift`
+was added for centralized key handling.
 
-**Build order (sequential — test each before the next):**
-1. API client → 2. Chat UI in a normal window → 3. Move UI into the non-activating panel →
-4. Global hotkey → 5. Verify web search end-to-end.
+**State ownership:** `ChatViewModel` (`@MainActor`) is the single source of truth for the message
+thread and in-flight request. The app delegate (in `main.swift`) owns the panel and hotkey.
+`GlobalHotKey` just calls the toggle closure. `AnthropicClient` is an `actor` owning only the
+in-memory conversation `history` (the one session). `Secrets` is read-only.
+
+**Build order followed (sequential — each tested before the next):**
+1. API client → 2. Chat UI → 3. Non-activating panel → 4. Global hotkey → 5. Verify web search.
 
 ---
 
@@ -126,15 +134,31 @@ it's currently streaming.
 **Responsibility:** read the key, build a Messages API request to `claude-opus-4-8`, stream the
 response, surface text deltas to the caller, handle web-search tool blocks gracefully.
 
-**Key loading:**
+**Key loading (centralized in `Secrets.swift`):** keys are read from the environment via
+`ProcessInfo`, trimmed, and treated as missing if empty. `AnthropicClient` asks `Secrets` for the
+key rather than reading the environment directly:
 ```swift
-guard let apiKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"],
-      !apiKey.isEmpty else {
-    // Surface a clear, user-visible error in the chat UI — DO NOT crash.
-    throw ChinguError.missingAPIKey
+// Secrets.swift — single source for all keys; never logs/prints values.
+static func value(_ key: Key) -> String? {
+    guard let raw = ProcessInfo.processInfo.environment[key.rawValue] else { return nil }
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
 }
+
+// AnthropicClient — on send, with no key, yields a .failed(.missingAPIKey) event
+// (surfaced in the chat UI) instead of crashing.
+guard let key = Secrets.value(.anthropic) else { /* emit missing-key message */ }
 ```
 Never log, print, or hard-code the key.
+
+**Where keys come from (local demo):** a gitignored `.env` at the repo root holds the keys;
+`scripts/run.sh` sources it (exporting the vars) before `swift run`, so the app reads them through
+`ProcessInfo`. No in-app `.env` parsing — the shell does it. `.env.example` documents the format.
+See §6 for the run flow.
+
+**`ELEVENLABS_API_KEY`:** read and validated by `Secrets` now (for CP4 readiness) but **not
+consumed** — no speech code in CP1. It is *not* required this checkpoint, so its absence does not
+trigger the setup banner. Launch logs presence only (`ELEVENLABS_API_KEY loaded` / `not set`).
 
 **Request (verify exact shape via `/claude-api`):**
 - Endpoint: `POST https://api.anthropic.com/v1/messages`
@@ -227,21 +251,23 @@ isolated from panel-focus bugs.
 
 ---
 
-### 4.3 `OverlayPanel` + `OverlayController` (build third — the crux)
+### 4.3 The non-activating panel (build third — the crux)
 
 **This is the load-bearing component.** CP2–CP4 depend on the panel never stealing focus.
+**As built:** `ChinguPanel.swift` (the `NSPanel` subclass) + the show/hide/position logic in the
+app delegate (`main.swift`). (The original spec split this into `OverlayPanel` + `OverlayController`;
+the responsibilities are the same, the files differ.)
 
-**`OverlayPanel: NSPanel`:**
-- Init with style mask including **`.nonactivatingPanel`** (plus `.titled`/`.fullSizeContentView`
-  as needed for a borderless look; hide the title bar).
+**`ChinguPanel: NSPanel`** (matches the as-built initializer):
+- Style mask includes **`.nonactivatingPanel`** (plus `.titled` + `.fullSizeContentView` for a
+  borderless look; title bar hidden, transparent).
 - `becomesKeyOnlyIfNeeded = true`
 - `isFloatingPanel = true`
-- `level = .floating` (or higher, e.g. `.statusBar`-level) so it sits above other apps.
-- `collectionBehavior` includes `.canJoinAllSpaces` and `.fullScreenAuxiliary` so it appears
-  over fullscreen apps and on every Space.
+- `level = .statusBar` so it sits above other apps.
+- `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]` so it appears over
+  fullscreen apps and on every Space.
 - `hidesOnDeactivate = false`.
-- Background: transparent/blurred as desired; `isOpaque = false`,
-  `backgroundColor = .clear` if doing a custom rounded card.
+- `isOpaque = false`, `backgroundColor = .clear` (SwiftUI draws a custom rounded, blurred card).
 
 **The focus crux (must solve):** a non-activating panel does **not** become key by default, but
 the chat `TextField` needs keyboard input. The required behavior:
@@ -263,31 +289,37 @@ the chat `TextField` needs keyboard input. The required behavior:
 - Handle the no-notch case (older/external displays) gracefully — sit just below the menu bar.
 - Pick the screen with the mouse / key window, or `NSScreen.main`.
 
-**Sizing:** fixed width and height (the spec says fixed-size, scrollable history). Pick a
-sensible size (e.g. ~`520 × 360`); the message list scrolls inside it. Don't make it resizable.
+**Sizing:** fixed, not resizable. **As built: `420 × 520`** (the SwiftUI `ChatView` owns the frame;
+the message list scrolls inside it).
 
-**`OverlayController`:**
-- Creates the panel once, hosts `ChatView` via `NSHostingView(rootView:)`.
-- `show()` / `hide()` / `toggle()`.
-- On `show()`: position on the current screen, `orderFront(nil)` (or `makeKeyAndOrderFront` only
-  if needed for the text field — prefer `orderFront` + click-to-focus to avoid activating).
-- The `ChatViewModel` should be created once and shared (so the thread persists across
-  hide/show within a session — quitting still erases it, per spec).
+**Show/hide (in the app delegate, `main.swift`):**
+- Creates the panel once, hosting `ChatView` via `NSHostingView(rootView:)`.
+- `togglePanel()` / `showPanel()` (and `panel.orderOut(nil)` to hide).
+- On show: reposition on the current screen, then `panel.orderFrontRegardless()` followed by
+  `panel.makeKey()`. `orderFrontRegardless` shows without activating our app; `makeKey()` lets the
+  text field accept typing immediately (no click needed) — safe because the panel is
+  non-activating, so the app behind stays active. (The spec floated `orderFront` + click-to-focus
+  as an alternative; proactive `makeKey()` is the as-built choice for a better first-keystroke UX.)
+- One shared `ChatViewModel` persists the thread across hide/show within a session (quitting still
+  erases it, per spec).
 
 ---
 
-### 4.4 `HotkeyManager` (build fourth)
+### 4.4 `GlobalHotKey` (build fourth)
 
-- Register a **system-wide** hotkey that works regardless of the focused app.
-- Implementation: Carbon `RegisterEventHotKey` (no dependency) **or** the `HotKey` SwiftPM
-  package (simpler; acceptable to add as the one dependency).
-- On press → call `OverlayController.toggle()`.
-- Pick a default combo unlikely to collide (e.g. `⌥⌘Space` / `Option-Command-Space`, or
-  `⌃Space` if not taken). State the chosen combo in the run instructions.
-- Unregister cleanly on quit.
+- A **system-wide** hotkey that works regardless of the focused app.
+- **As built:** Carbon `RegisterEventHotKey` (no dependency), wrapped in
+  `GlobalHotKey.swift`. The wrapper is `@MainActor`-isolated and routes the C event callback back
+  to a Swift closure by hotkey id; the single hotkey is created once at launch and lives for the
+  whole process (no dynamic unregister needed — see the comment in the file if hotkeys ever become
+  dynamic).
+- On press → the app delegate's `togglePanel()`.
+- **Chosen combo: `⌃⌥⌘Space`** (Control-Option-Command-Space) — three modifiers on Space dodges
+  `⌘Space` (Spotlight), `⌃Space` (input-source switch), and `⌥⌘Space` (which collided with Finder
+  on some setups).
 - **Note:** a global hotkey via Carbon/`RegisterEventHotKey` does **not** require the
   Accessibility permission (that's only for event taps / synthetic events, which are a CP3+
-  concern). CP1's hotkey should work with no TCC prompt.
+  concern). CP1's hotkey works with no TCC prompt.
 
 ---
 
@@ -305,7 +337,7 @@ sensible size (e.g. ~`520 × 360`); the message list scrolls inside it. Don't ma
 All must hold:
 
 1. App builds and launches with **no Dock-stealing window**; no crash when the key is unset
-   (shows a clear "set ANTHROPIC_API_KEY" message instead).
+   (shows a "Setup needed" banner in the empty state, and a missing-key message on send, instead).
 2. Pressing the global hotkey **toggles** the overlay from within any other app.
 3. The overlay appears **top-center, below the notch**, fixed size, floating above other apps.
 4. **Focus test passes:** showing the overlay and typing into it does **not** deactivate the app
@@ -320,29 +352,44 @@ All must hold:
 
 ## 6. Hand-off when CP1 is built
 
-1. Confirm the project **builds**.
-2. **Tell the user to paste their API key** with exact steps:
-   - **Xcode project:** Product → Scheme → Edit Scheme → Run → Arguments → Environment Variables
-     → add `ANTHROPIC_API_KEY` = their key. Ensure the scheme is **not Shared** (Manage Schemes →
-     uncheck Shared) so the key stays in local `xcuserdata/` (gitignored).
-   - **SwiftPM / terminal run:** `export ANTHROPIC_API_KEY="sk-ant-..."` then run.
-   - Make clear the app **builds and launches without the key**, but the first message shows a
-     "key missing" notice until it's set.
-3. State: how to run it, the chosen hotkey combo, and one plain-question + one web-search-question
-   to test.
-4. Note any deviations from this spec and why.
+**Build:** `swift build` (or `./scripts/run.sh build`). **Run:** `./scripts/run.sh`.
+
+**Provide the API key (local demo — `.env`):**
+1. `cp .env.example .env`
+2. Open `.env` and paste your key(s): `ANTHROPIC_API_KEY=sk-ant-...` (and `ELEVENLABS_API_KEY` is
+   optional — CP4, leave blank).
+3. `./scripts/run.sh` — the script sources `.env`, exports the vars, reports key **presence only**
+   (never values), then launches via `swift run`.
+   - Alternative: `export ANTHROPIC_API_KEY="sk-ant-..."` in your shell, then `swift run`.
+   - The app **builds and launches without the key**; the empty state shows a "Setup needed"
+     banner (and the first send shows a missing-key message) until it's set.
+
+`.env` is gitignored; `.env.example` (placeholders only) is committed. Keys are never hard-coded,
+never printed in logs, and only read via `ProcessInfo`.
+
+**Hotkey:** `⌃⌥⌘Space` (Control-Option-Command-Space) toggles the overlay from any app.
+
+**Test:** one plain question (`What is 49 × 52 + 10?`) and one current-info question
+(`What's the latest stable macOS version?` — should show "Searching the web…" then a cited answer).
+The focus test (§4.3) and hotkey need a real GUI session via `./scripts/run.sh`.
+
+**Deviations from this spec:** SwiftPM executable instead of an Xcode project (§2); flat file
+layout with `main.swift` and `Secrets.swift` (§3); `.env` + `scripts/run.sh` for secrets instead
+of an Xcode scheme.
 
 ---
 
 ## 7. Known gotchas (read before building)
 
-- **Xcode-launched apps don't inherit shell `export`s.** If `ProcessInfo` returns nil when run
-  from Xcode, the key must be set in the **scheme's** Environment Variables, not just `~/.zshrc`.
-  Surface a clear in-app message when the key is missing so this is obvious.
+- **GUI apps don't inherit your shell `export`s automatically.** Launch via `./scripts/run.sh`
+  (which sources `.env` and exports the keys before `swift run`), or `export` in the same shell you
+  run `swift run` from. If `ProcessInfo` returns nil, the keys weren't in the launching process's
+  environment. The in-app "Setup needed" banner makes this obvious.
 - **Non-activating panel + text input is the classic trap.** Spend your debugging time here. The
   combination of `.nonactivatingPanel`, `becomesKeyOnlyIfNeeded`, `canBecomeKey = true`, and
-  `canBecomeMain = false` is what makes typing work without activating Chingu. Verify with the
-  focus test in §4.3.
+  `canBecomeMain = false` is what makes typing work without activating Chingu. As built, the app
+  calls `panel.makeKey()` on show so you can type immediately without an extra click — safe because
+  the panel is non-activating. Verify with the focus test in §4.3.
 - **SSE parsing:** Anthropic streams Server-Sent Events (`event:` + `data:` lines, JSON bodies).
   Parse line-by-line from `URLSession.bytes`; don't assume one chunk = one event. Accumulate.
 - **Don't over-engineer.** No persistence, no settings, no SDK abstractions. Smallest thing that

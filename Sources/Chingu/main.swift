@@ -25,11 +25,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = ChinguPanel(rootView: ChatView(model: model))
         positionBelowNotch()
 
-        // Global hotkey: ⌥⌘Space toggles the overlay from any app. Avoids ⌘Space
-        // (Spotlight) and ⌃Space (input source switch).
+        // Global hotkey: ⌃⌥⌘Space toggles the overlay from any app. Three modifiers on
+        // Space dodges ⌘Space (Spotlight), ⌃Space (input source), and ⌥⌘Space (which
+        // collided with Finder on some setups).
         hotKey = GlobalHotKey(
             keyCode: UInt32(kVK_Space),
-            modifiers: UInt32(cmdKey | optionKey)
+            modifiers: UInt32(controlKey | optionKey | cmdKey)
         ) { [weak self] in
             self?.togglePanel()
         }

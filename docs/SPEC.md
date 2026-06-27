@@ -17,11 +17,13 @@ CP4.
 **Division of labor:** Claude is the brain (reasoning, vision, web search); ElevenLabs is the
 voice (STT + TTS); Swift owns the mic, UI, and overlay.
 
-**API keys:** In development, read the key from an environment variable
-(`ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]`); when shipping, move to the macOS
-Keychain. Never hard-code or commit a key — secrets and Xcode artifacts are covered by
-`.gitignore`. (Note: any key bundled in a distributed Mac app is extractable; a proxy server is
-the only real fix, but that's out of scope for the hackathon.)
+**API keys:** In development, read keys from environment variables
+(`ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]`, and `ELEVENLABS_API_KEY` for CP4).
+For the local demo, keys live in a gitignored `.env` that `scripts/run.sh` loads before
+`swift run` (so the app reads them via `ProcessInfo`); `.env.example` documents the format. When
+shipping, move to the macOS Keychain. Never hard-code, print, or commit a key — secrets and build
+artifacts are covered by `.gitignore`. (Note: any key bundled in a distributed Mac app is
+extractable; a proxy server is the only real fix, but that's out of scope for the hackathon.)
 
 ---
 
