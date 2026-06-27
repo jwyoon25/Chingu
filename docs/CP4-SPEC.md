@@ -386,6 +386,23 @@ launch, the contract reserves a one-liner: add `extension AppDelegate { func set
 A wake-word trigger on the same mic stream. Build only after STT+TTS ship and only if time
 allows. It's a trigger on top of the existing mic capture — it does **not** change the pipeline.
 
+> **Status: attempted, then reverted — not in CP4 for now.** A working version was built on
+> Apple's on-device `SFSpeechRecognizer` (a `WakeWord.swift` listener + a composer toggle,
+> paused during capture/playback so it can't hear Chingu's own voice). It crashed at runtime:
+> macOS **TCC hard-aborts** (`__TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__`) the moment
+> `SFSpeechRecognizer.requestAuthorization` runs from our **bare `swift run` binary** — even
+> with `NSSpeechRecognitionUsageDescription` embedded via the §4 linker trick. That embedded
+> plist satisfies TCC for **Microphone** but **not Speech Recognition**, which is stricter about
+> responsible-process attribution for an unbundled, unsigned executable. The abort is fatal
+> before any Swift error, so it can't be caught or degraded in code.
+>
+> **To ship it, package Chingu as a real `.app` bundle:** a `Contents/Info.plist` TCC trusts for
+> Speech; `exec` the inner binary directly (so `.env` keys still load via `ProcessInfo` *and* the
+> process gets bundle identity); optionally code-sign for permission persistence across rebuilds.
+> That's a `scripts/run.sh` (and possibly `Package.swift`) change to coordinate with CP2 — it
+> would also help CP2's Screen Recording grant. Until then, CP4 ships with tap-to-talk (fully
+> demoable); the wake word is pure upside.
+
 ---
 
 ## 7. Verified ElevenLabs API reference (do not guess — re-confirm if the API has moved)
@@ -472,6 +489,10 @@ change needed there.
 
 - **Mic crashes without a usage description (§4).** This is the #1 trap and is CP4-specific. Do
   §4 before any mic code, or the first permission request kills the process.
+- **Speech Recognition needs a real `.app` bundle (not just the embedded plist).** Unlike
+  Microphone, `SFSpeechRecognizer.requestAuthorization` TCC-aborts a bare `swift run` binary even
+  with `NSSpeechRecognitionUsageDescription` embedded — so the wake word (§6.7) requires bundling.
+  Mic / STT / TTS are unaffected.
 - **`AVAudioSession` is iOS-only.** On macOS it doesn't exist; importing/using it won't build.
   `AVAudioRecorder`/`AVAudioPlayer` need no session. **Retain the `AVAudioPlayer`** (strong
   property) or playback stops early.
