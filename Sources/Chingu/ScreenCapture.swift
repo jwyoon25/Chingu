@@ -1,5 +1,10 @@
 import AppKit
-import ScreenCaptureKit
+// ScreenCaptureKit isn't fully Sendable-audited yet, so on strict Swift 6 toolchains
+// `SCShareableContent.current` trips "non-sendable type … cannot cross actor boundary"
+// (a pre-existing main/CP2 build break on Swift 6.0.3). @preconcurrency downgrades those
+// SDK annotation gaps to warnings; runtime behavior is unchanged. Cross-lane fix applied
+// while landing CP4 — flag for CP2's owner.
+@preconcurrency import ScreenCaptureKit
 
 /// Screenshot capture for CP2 (see `docs/CP2-SPEC.md`).
 ///
