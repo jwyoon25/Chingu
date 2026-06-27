@@ -246,6 +246,13 @@ struct Message: Identifiable {
   5. On finish/error: set `isStreaming = false`; on error, set the assistant text to a clear
      error string (or append an error bubble).
 
+  > **As built (post parallel-dev seam).** `send()` is now a thin no-arg wrapper that trims
+  > `input`, clears the field, and hands off to `submit(text:image:)` — the single entry point
+  > the CP2/CP4 split is built around (see [`PARALLEL-CP2-CP4.md`](PARALLEL-CP2-CP4.md)). The
+  > behavior above is unchanged for CP1: `image` defaults to `nil` (text-only) and the
+  > `onAssistantResponseComplete` hook defaults to `nil` (no-op). `ChatView`'s `.onSubmit` /
+  > Send button still call `model.send`, so the composer is untouched.
+
 **`ChatView` (SwiftUI):**
 - A scrollable message list (`ScrollView` + `LazyVStack`, or `List`). User bubbles right-aligned,
   assistant left-aligned — keep styling simple but legible. (Visual polish can lean on the
