@@ -5,10 +5,14 @@ import SwiftUI
 /// panel; also runnable standalone in a window for development.
 struct ChatView: View {
     @ObservedObject var model: ChatViewModel
+    /// CP4 voice loop. Owned here as a @StateObject built from `model` so it lives with
+    /// the view and `main.swift` needs no change. It drives the chat's public seams.
+    @StateObject private var voice: VoiceController
 
-    // TEMPORARY (CP4 §5 harness): proves the ElevenLabs round-trips in-app before the
-    // real mic UI exists. Remove together with SpeechDebug.swift at build-order step 6.
-    @StateObject private var speechDebug = SpeechDebug()
+    init(model: ChatViewModel) {
+        self.model = model
+        _voice = StateObject(wrappedValue: VoiceController(model: model))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -116,25 +120,7 @@ struct ChatView: View {
                     .onSubmit(model.send)                // Enter sends
                     .submitLabel(.send)
 
-                // TEMPORARY (CP4 §5 harness): tap to listen; it auto-stops when you pause
-                // (tap again to stop early). First tap triggers the mic permission prompt.
-                // Remove with SpeechDebug.swift at build-order step 6.
-                Button { speechDebug.toggleRecord() } label: {
-                    Image(systemName: speechDebug.isRecording ? "stop.circle.fill" : "mic.circle.fill")
-                        .font(.system(size: 18))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(speechDebug.isRecording ? .red : .secondary)
-                .help("CP4 STT test (listen → auto-stop → transcribe)")
-
-                // TEMPORARY (CP4 §5 harness): tap to hear a TTS round-trip. Remove with
-                // SpeechDebug.swift at build-order step 6.
-                Button { speechDebug.testTTS() } label: {
-                    Image(systemName: "speaker.wave.2.fill").font(.system(size: 18))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("CP4 TTS test")
+                micButton
 
                 Button(action: model.send) {
                     Image(systemName: "arrow.up.circle.fill")
@@ -146,15 +132,62 @@ struct ChatView: View {
                 .keyboardShortcut(.return, modifiers: [])   // Enter also fires the button
             }
 
-            // TEMPORARY (CP4 §5 harness): shows the last TTS/STT test result.
-            if !speechDebug.status.isEmpty {
-                Text(speechDebug.status)
+            if let note = voiceNote {
+                Text(note.text)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(note.isError ? Color.orange : Color.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(10)
+    }
+
+    // MARK: Voice (CP4)
+
+    /// Mic button: tap to ask by voice; it auto-stops on silence, transcribes, and the
+    /// reply is spoken aloud. Tapping while speaking interrupts and listens again.
+    private var micButton: some View {
+        Button(action: voice.toggleMic) {
+            Image(systemName: micSymbol).font(.system(size: 22))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(micTint)
+        .disabled(micDisabled)
+        .help("Ask by voice")
+    }
+
+    private var micSymbol: String {
+        switch voice.state {
+        case .idle:         return "mic.circle.fill"
+        case .listening:    return "stop.circle.fill"
+        case .transcribing: return "ellipsis.circle.fill"
+        case .speaking:     return "speaker.wave.2.circle.fill"
+        }
+    }
+
+    private var micTint: Color {
+        switch voice.state {
+        case .idle:         return model.isResponding ? .secondary : .accentColor
+        case .listening:    return .red
+        case .transcribing: return .secondary
+        case .speaking:     return .accentColor
+        }
+    }
+
+    /// Disabled mid-transcription, and while a typed/voice turn is streaming (one turn at
+    /// a time) — except when speaking, where a tap is allowed to barge in.
+    private var micDisabled: Bool {
+        voice.state == .transcribing || (voice.state == .idle && model.isResponding)
+    }
+
+    private var voiceNote: (text: String, isError: Bool)? {
+        if let error = voice.errorMessage { return (error, true) }
+        switch voice.state {
+        case .listening:    return ("Listening…", false)
+        case .transcribing: return ("Transcribing…", false)
+        case .speaking:     return ("Speaking…", false)
+        case .idle:         return nil
+        }
     }
 
     private static let bottomAnchor = "chingu.bottom.anchor"
