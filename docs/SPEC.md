@@ -239,6 +239,35 @@ it seamless.
 
 ---
 
+## Parallel development (CP2 ∥ CP4)
+
+CP2 (screenshots) and CP4 (speech) are built **in parallel by two developers** off `main`.
+This is safe because the checkpoints are architecturally orthogonal: **CP4 wraps the
+pipeline** (`voice in → text → [pipeline] → text → voice out` — the transcript enters via the
+same path as a typed question, see CP4 above), while **CP2 reaches inside the call** (it adds
+a screenshot to one Claude turn). One wraps, one reaches inside; they meet only at two seams.
+
+To keep those seams conflict-free, the chat entry point and response output are locked as a
+**contract on `main` before either developer branches:**
+
+- **Input seam:** `ChatViewModel.submit(text:image:)` — the single entry for every question.
+  Typed and transcribed questions both call `submit(text:)`; CP2 fills the optional `image`.
+  (The image-carrying superset is locked deliberately so CP2 never has to re-sign it.)
+- **Output seam:** `ChatViewModel.onAssistantResponseComplete` — a hook fired with the final
+  assistant text when a turn completes; CP4 sets it to drive TTS.
+
+**Topology:** CP2→CP3 are sequential (CP3 needs CP2's screenshot pipeline; same owner); only
+CP4 runs truly parallel. **Merge order:** CP2 first (it touches the request shape), then CP4
+rebases onto it. New capabilities live in **new files** (`ScreenCapture.swift` for CP2;
+`SpeechService.swift` / `MicCapture.swift` for CP4); AppDelegate additions go in **separate
+`extension AppDelegate` blocks**.
+
+Full coordination rules, the file-ownership map, and agent instructions live in
+[`PARALLEL-CP2-CP4.md`](PARALLEL-CP2-CP4.md). The per-checkpoint build specs are
+[`CP2-SPEC.md`](CP2-SPEC.md) and [`CP4-SPEC.md`](CP4-SPEC.md).
+
+---
+
 ## End-to-end example (Adobe Premiere Pro)
 
 You're in Premiere and ask Chingu: *"How do I add a fading transition between scene 1 and scene
@@ -268,3 +297,4 @@ You're in Premiere and ask Chingu: *"How do I add a fading transition between sc
 | Coordinate accuracy | Claude picks target, Accessibility API locates it | CP3a |
 | Multi-step advance | Hotkey to advance (focus-preserving); typing to refine | CP3b |
 | Speech | ElevenLabs STT (end-of-question) + ElevenLabs TTS responses; voice advance | CP4 |
+| Parallel-dev seam | Locked contract: `submit(text:image:)` input + `onAssistantResponseComplete` output; CP2∥CP4 off `main`, merge CP2→CP4 (see `PARALLEL-CP2-CP4.md`) | CP2/CP4 |
