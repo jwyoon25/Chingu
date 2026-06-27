@@ -19,7 +19,7 @@ final class ChinguPanel: NSPanel {
     init(rootView: some View) {
         super.init(
             // Size is owned by the SwiftUI content; this is just the initial frame.
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
             styleMask: [
                 .nonactivatingPanel,   // showing/keying the panel never activates our app
                 .titled,

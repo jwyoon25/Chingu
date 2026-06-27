@@ -12,7 +12,7 @@ struct ChatView: View {
             Divider()
             composer
         }
-        .frame(width: 420, height: 520)            // fixed size; history scrolls
+        .frame(width: 520, height: 520)            // fixed size; history scrolls
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
