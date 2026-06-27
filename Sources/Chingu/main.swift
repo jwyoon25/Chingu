@@ -9,7 +9,8 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = ChatViewModel()
     private var panel: ChinguPanel!
-    private var hotKey: GlobalHotKey?
+    private var panelHotKey: GlobalHotKey?
+    private var voiceHotKey: GlobalHotKey?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Accessory app: lives in the menu-bar layer, shows no Dock icon, and never
@@ -25,20 +26,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = ChinguPanel(rootView: ChatView(model: model))
         positionBelowNotch()
 
-        // Global hotkey: ⌃⌥⌘K toggles the overlay from any app. Three modifiers keep it
-        // clear of common system/app shortcuts.
-        hotKey = GlobalHotKey(
+        // ⌃⌥⌘Space — show/hide the overlay only (no voice).
+        panelHotKey = GlobalHotKey(
+            keyCode: UInt32(kVK_Space),
+            modifiers: UInt32(controlKey | optionKey | cmdKey)
+        ) { [weak self] in
+            guard let self else { return }
+            let willHide = self.panel.isVisible
+            self.togglePanel()
+            if willHide {
+                NotificationCenter.default.post(name: .chinguDeactivateVoice, object: nil)
+            }
+        }
+
+        // ⌃⌥⌘K — voice input (shows the panel first if hidden).
+        voiceHotKey = GlobalHotKey(
             keyCode: UInt32(kVK_ANSI_K),
             modifiers: UInt32(controlKey | optionKey | cmdKey)
         ) { [weak self] in
             guard let self else { return }
-            // Showing the overlay also starts voice input (hands-free); hiding stops it.
-            // The voice loop (CP4) listens for these via NotificationCenter — see
-            // VoiceController — so the AppDelegate stays decoupled from it.
-            let willShow = !self.panel.isVisible
-            self.togglePanel()
-            NotificationCenter.default.post(
-                name: willShow ? .chinguActivateVoice : .chinguDeactivateVoice, object: nil)
+            if !self.panel.isVisible { self.showPanel() }
+            NotificationCenter.default.post(name: .chinguActivateVoice, object: nil)
         }
 
         // Show on launch so the first run is obviously alive; the hotkey hides/shows

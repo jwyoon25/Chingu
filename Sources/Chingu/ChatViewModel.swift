@@ -55,6 +55,10 @@ final class ChatViewModel: ObservableObject {
     /// behave exactly as before. Invoked on the main actor, after the empty-bubble guard.
     var onAssistantResponseComplete: ((String) -> Void)?
 
+    /// Fired as the assistant reply streams in, with the cumulative text so far.
+    /// CP4 uses this for incremental TTS so speech starts before the turn finishes.
+    var onAssistantTextUpdate: ((String) -> Void)?
+
     /// Fired once per turn with the parsed pointing tag (`nil` = clear) and the geometry
     /// of the screenshot it refers to. **CP3 pointing seam:** `PointingController` sets
     /// this to remap the coordinate and draw the on-screen circle — see
@@ -131,6 +135,9 @@ final class ChatViewModel: ObservableObject {
                     update(assistantID) {
                         $0.text += delta
                         $0.isSearching = false
+                    }
+                    if let partial = messages.first(where: { $0.id == assistantID })?.text {
+                        onAssistantTextUpdate?(partial)
                     }
                 case .searching:
                     update(assistantID) {

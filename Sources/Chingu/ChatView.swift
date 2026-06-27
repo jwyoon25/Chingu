@@ -1,16 +1,12 @@
 import SwiftUI
 
-/// The Chingu chat overlay UI. A fixed-size, scrollable single thread with a
-/// send-on-Enter composer. Hosted (via NSHostingView) inside the non-activating
-/// panel; also runnable standalone in a window for development.
+/// The Chingu chat overlay UI — a wide, compact bar below the notch. Hosted inside the
+/// non-activating panel; also runnable standalone in a window for development.
 struct ChatView: View {
     @ObservedObject var model: ChatViewModel
-    /// CP4 voice loop. Owned here as a @StateObject built from `model` so it lives with
-    /// the view and `main.swift` needs no change. It drives the chat's public seams.
     @StateObject private var voice: VoiceController
-    /// CP3 pointing loop. Same outside-in pattern: built from `model`, it sets
-    /// `model.onPointing` and owns the on-screen circle overlay (no `main.swift` change).
     @StateObject private var pointer: PointingController
+    @State private var isHovered = false
 
     init(model: ChatViewModel) {
         self.model = model
@@ -19,21 +15,41 @@ struct ChatView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             thread
-            Divider()
-            if let notice = model.captureNotice {
-                captureBanner(notice)
-            }
             composer
         }
-        .frame(width: 520, height: 520)            // fixed size; history scrolls
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+        .frame(width: 720)
+        .frame(minHeight: 130, maxHeight: 280)
+        .background(panelBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(.white.opacity(0.08))
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(.white.opacity(isHovered ? 0.14 : 0.06), lineWidth: 1)
         )
+        .opacity(isHovered ? 1 : 0.12)
+        .animation(.easeInOut(duration: 0.22), value: isHovered)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active:   isHovered = true
+            case .ended:    isHovered = false
+            }
+        }
+    }
+
+    // MARK: Background
+
+    private var panelBackground: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.black.opacity(0.72))
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .opacity(0.55)
+        }
     }
 
     // MARK: Thread
@@ -41,18 +57,17 @@ struct ChatView: View {
     private var thread: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 10) {
                     if model.messages.isEmpty {
                         emptyState
                     }
                     ForEach(model.messages) { message in
-                        MessageRow(message: message)
+                        MessageLine(message: message)
                             .id(message.id)
                     }
-                    // Anchor we can always scroll to as tokens stream in.
                     Color.clear.frame(height: 1).id(Self.bottomAnchor)
                 }
-                .padding(12)
+                .padding(.bottom, 4)
             }
             .onChange(of: model.messages) { _, _ in
                 withAnimation(.easeOut(duration: 0.15)) {
@@ -65,123 +80,130 @@ struct ChatView: View {
     @ViewBuilder
     private var emptyState: some View {
         let missing = Secrets.missingRequiredKeys
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Chingu")
-                .font(.headline)
-            if missing.isEmpty {
-                Text("Ask anything. I can search the web when I need current info.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                // Surface missing required keys up front, before the user even types,
-                // so setup is obvious on first launch. (Never shows key values.)
-                Label("Setup needed", systemImage: "key.slash")
-                    .font(.callout.weight(.semibold))
-                    .foregroundStyle(.orange)
-                Text(Secrets.setupMessage(for: missing))
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
+        HStack(alignment: .top, spacing: 10) {
+            globeIcon
+            VStack(alignment: .leading, spacing: 4) {
+                if missing.isEmpty {
+                    Text("Ask anything — I can see your screen and search the web.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white.opacity(0.92))
+                } else {
+                    Text("Setup needed")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(Secrets.setupMessage(for: missing))
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .textSelection(.enabled)
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 8)
-    }
-
-    /// Shown when a turn couldn't attach the screen (e.g. Screen Recording permission
-    /// is off). CP2 — the question still goes through text-only; this just explains why
-    /// the screen wasn't seen and how to fix it.
-    private func captureBanner(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-            Text(text)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .font(.caption)
-        .foregroundStyle(.orange)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .textSelection(.enabled)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(.orange.opacity(0.1))
     }
 
     // MARK: Composer
 
     private var composer: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 8) {
-                // .plain + manual styling so the placeholder reads as guidance and the
-                // field clears on input automatically (it's bound to model.input, which
-                // send() empties). onSubmit gives us send-on-Enter.
-                TextField("Write your question/prompt here", text: $model.input, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...4)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(.white.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .onSubmit(model.send)                // Enter sends
-                    .submitLabel(.send)
-
-                micButton
-
-                Button(action: model.send) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 24))
+        VStack(spacing: 6) {
+            if let notice = model.captureNotice {
+                captureBanner(notice)
+            }
+            HStack(spacing: 10) {
+                ZStack(alignment: .leading) {
+                    if model.input.isEmpty {
+                        placeholderHint
+                    }
+                    TextField("", text: $model.input, axis: .vertical)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white)
+                        .lineLimit(1...3)
+                        .onSubmit(model.send)
+                        .submitLabel(.send)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.canSend ? Color.accentColor : Color.secondary)
-                .disabled(!model.canSend)
-                .keyboardShortcut(.return, modifiers: [])   // Enter also fires the button
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.1))
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+                )
+
+                actionButton
             }
 
             if let note = voiceNote {
                 Text(note.text)
                     .font(.caption2)
-                    .foregroundStyle(note.isError ? Color.orange : Color.secondary)
+                    .foregroundStyle(note.isError ? Color.orange : Color.white.opacity(0.45))
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, 4)
             }
         }
-        .padding(10)
+        .padding(.top, 8)
     }
 
-    // MARK: Voice (CP4)
+    /// Matches the mock: "Type or hold [⌘] to speak" with a keycap-styled command glyph.
+    private var placeholderHint: some View {
+        HStack(spacing: 4) {
+            Text("Type or hold")
+                .foregroundStyle(.white.opacity(0.38))
+            KeycapLabel(symbol: "⌘")
+            Text("K to speak")
+                .foregroundStyle(.white.opacity(0.38))
+        }
+        .font(.system(size: 14))
+        .allowsHitTesting(false)
+        .padding(.leading, 2)
+    }
 
-    /// Mic button: tap to ask by voice; it auto-stops on silence, transcribes, and the
-    /// reply is spoken aloud. Tapping while speaking interrupts and listens again.
-    private var micButton: some View {
-        Button(action: voice.toggleMic) {
-            Image(systemName: micSymbol).font(.system(size: 22))
+    /// Mic / stop — tap to listen, tap while speaking to interrupt, or use ⌃⌥⌘K.
+    private var actionButton: some View {
+        Button(action: actionButtonTapped) {
+            Image(systemName: actionSymbol)
+                .font(.system(size: 15, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(actionTint.opacity(0.22)))
+                .foregroundStyle(actionTint)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(micTint)
-        .disabled(micDisabled)
-        .help("Ask by voice")
+        .help(actionHelp)
+        .disabled(actionDisabled)
     }
 
-    private var micSymbol: String {
+    private var actionSymbol: String {
         switch voice.state {
-        case .idle:         return "mic.circle.fill"
-        case .listening:    return "stop.circle.fill"
-        case .transcribing: return "ellipsis.circle.fill"
-        case .speaking:     return "speaker.wave.2.circle.fill"
+        case .speaking:     return "stop.fill"
+        case .listening:    return "stop.fill"
+        case .transcribing: return "ellipsis"
+        case .idle:         return "mic.fill"
         }
     }
 
-    private var micTint: Color {
+    private var actionTint: Color {
         switch voice.state {
-        case .idle:         return model.isResponding ? .secondary : .accentColor
-        case .listening:    return .red
-        case .transcribing: return .secondary
-        case .speaking:     return .accentColor
+        case .speaking, .listening: return .red
+        case .transcribing:         return .white.opacity(0.5)
+        case .idle:                 return model.isResponding ? .white.opacity(0.35) : .white.opacity(0.85)
         }
     }
 
-    /// Disabled mid-transcription, and while a typed/voice turn is streaming (one turn at
-    /// a time) — except when speaking, where a tap is allowed to barge in.
-    private var micDisabled: Bool {
+    private var actionDisabled: Bool {
         voice.state == .transcribing || (voice.state == .idle && model.isResponding)
+    }
+
+    private var actionHelp: String {
+        voice.state == .speaking ? "Stop speaking" : "Ask by voice (⌃⌥⌘K)"
+    }
+
+    private func actionButtonTapped() {
+        if voice.state == .speaking {
+            voice.interruptSpeech()
+        } else {
+            voice.toggleMic()
+        }
     }
 
     private var voiceNote: (text: String, isError: Bool)? {
@@ -194,59 +216,111 @@ struct ChatView: View {
         }
     }
 
+    private func captureBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(text)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.caption)
+        .foregroundStyle(.orange)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .textSelection(.enabled)
+    }
+
+    private var globeIcon: some View {
+        Image(systemName: "globe.americas.fill")
+            .font(.system(size: 14))
+            .foregroundStyle(.white)
+            .frame(width: 28, height: 28)
+            .background(Circle().fill(Color.blue.opacity(0.85)))
+    }
+
     private static let bottomAnchor = "chingu.bottom.anchor"
 }
 
-/// One message bubble. User messages right-aligned and tinted; assistant messages
-/// left-aligned. Shows a "Searching the web…" hint and a caret while streaming.
-private struct MessageRow: View {
+// MARK: - Message line (flat text, no bubbles)
+
+private struct MessageLine: View {
     let message: ChatMessage
 
     var body: some View {
-        HStack {
-            if message.role == .user { Spacer(minLength: 40) }
+        Group {
+            if message.role == .user {
+                userLine
+            } else {
+                assistantLine
+            }
+        }
+    }
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
+    private var userLine: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(message.text)
+                .textSelection(.enabled)
+                .font(.system(size: 15))
+                .foregroundStyle(.white.opacity(0.95))
+                .fixedSize(horizontal: false, vertical: true)
+            if message.hasImage {
+                Label("Screen attached", systemImage: "camera.viewfinder")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+        }
+        .padding(.leading, 34)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var assistantLine: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "globe.americas.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(Color.blue.opacity(0.85)))
+
+            VStack(alignment: .leading, spacing: 4) {
                 if message.isSearching {
                     Label("Searching the web…", systemImage: "magnifyingglass")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.white.opacity(0.45))
                 }
                 Text(displayText)
                     .textSelection(.enabled)
-                    .font(.body)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(bubbleColor)
-                    .foregroundStyle(message.role == .user ? Color.white : Color.primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                if message.role == .user, message.hasImage {
-                    Label("Screen attached", systemImage: "camera.viewfinder")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                    .font(.system(size: 14))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .fixedSize(horizontal: false, vertical: true)
             }
-
-            if message.role == .assistant { Spacer(minLength: 40) }
+            Spacer(minLength: 0)
         }
     }
 
-    /// While an assistant reply is mid-stream and has no text yet, show a thinking
-    /// caret so the bubble isn't blank.
     private var displayText: String {
-        if message.role == .assistant, message.isStreaming, message.text.isEmpty,
-           !message.isSearching {
+        if message.isStreaming, message.text.isEmpty, !message.isSearching {
             return "▍"
         }
-        // CP3: keep the machine-readable [POINT:…] tag (or an in-progress fragment) out of
-        // the bubble as it streams in; the authoritative strip happens in `.done`.
-        if message.role == .assistant {
-            return PointTag.strippingTrailingTag(message.text)
-        }
-        return message.text
+        return PointTag.strippingTrailingTag(message.text)
     }
+}
 
-    private var bubbleColor: Color {
-        message.role == .user ? Color.accentColor : Color.white.opacity(0.08)
+// MARK: - Keycap badge
+
+private struct KeycapLabel: View {
+    let symbol: String
+
+    var body: some View {
+        Text(symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.7))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(.white.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .strokeBorder(.white.opacity(0.18), lineWidth: 0.5)
+            )
     }
 }
