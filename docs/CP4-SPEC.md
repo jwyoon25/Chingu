@@ -24,6 +24,16 @@ Expands the CP4 section of [`SPEC.md`](SPEC.md). Read [`SPEC.md`](SPEC.md),
 >    stays untouched (the `VoiceController` is a `@StateObject` inside `ChatView`); the reserved
 >    AppDelegate one-liner is optional (§6.6).
 
+> **As-built (CP4 shipped, tap-to-talk).** Implemented and validated end-to-end:
+> `SpeechService.swift` (ElevenLabs STT + TTS), `MicCapture.swift` (AVAudioRecorder + 0.7 s
+> silence endpointing), `VoiceController.swift` (orchestrator that drives the two public seams),
+> a mic button + listening/speaking/error banner in `ChatView.swift`, and the mic `Info.plist` +
+> `Package.swift` linker flag (§4). **`ChatViewModel.swift` and `AnthropicClient.swift` were not
+> edited** — the zero-edit plan held. The wake word (§6.7) was built, then reverted (a
+> Speech-Recognition TCC limitation on the unbundled binary). `ELEVENLABS_API_KEY` is now
+> required (`Secrets.isRequiredNow`), and the voice path also surfaces a contextual missing-key
+> banner when the mic is used.
+
 ---
 
 ## 0. Scope — what CP4 is and is NOT
@@ -448,10 +458,10 @@ allows. It's a trigger on top of the existing mic capture — it does **not** ch
 ## 8. The `.env` / key detail
 
 `ELEVENLABS_API_KEY` is already wired through `Secrets` (loaded, trimmed, never logged) and
-`scripts/run.sh` (exported, presence-logged at launch). To make it **required** for CP4, flip
-`isRequiredNow` for `.elevenLabs` in `Secrets.swift` (a one-line, CP4-owned edit) so the
-empty-state "Setup needed" banner names it. `.env.example` already lists the placeholder — no
-change needed there.
+`scripts/run.sh` (exported, presence-logged at launch). **As-built:** `isRequiredNow` for
+`.elevenLabs` is now `true`, so a missing key shows up in the empty-state "Setup needed" banner;
+the voice path *additionally* surfaces a contextual missing-key banner if the mic is used without
+a key. `.env.example` already lists the placeholder — no change needed there.
 
 ---
 

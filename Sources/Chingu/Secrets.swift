@@ -6,8 +6,8 @@ import Foundation
 /// by `scripts/run.sh`, or exported in the shell). They are **never** hardcoded,
 /// **never** printed or logged, and only read through `ProcessInfo`.
 ///
-/// CP1 needs `ANTHROPIC_API_KEY`. `ELEVENLABS_API_KEY` is read and reported here so
-/// it's ready for speech in CP4, but nothing consumes it yet.
+/// CP1 needs `ANTHROPIC_API_KEY`. CP4 adds speech, which consumes `ELEVENLABS_API_KEY`
+/// (now required) via `SpeechService` for STT/TTS.
 enum Secrets {
     /// An API key the app expects from the environment.
     enum Key: String, CaseIterable {
@@ -18,7 +18,7 @@ enum Secrets {
         var isRequiredNow: Bool {
             switch self {
             case .anthropic: return true       // chat + web search (CP1)
-            case .elevenLabs: return false     // speech (CP4) — not wired up yet
+            case .elevenLabs: return true      // speech (CP4) — STT/TTS now wired up
             }
         }
 
