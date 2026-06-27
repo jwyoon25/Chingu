@@ -110,7 +110,14 @@ final class ChatViewModel: ObservableObject {
                         $0.isSearching = false
                     }
                 case .searching:
-                    update(assistantID) { $0.isSearching = true }
+                    update(assistantID) {
+                        $0.isSearching = true
+                        // Drop any "let me search…" preamble emitted before the tool
+                        // call — the real answer streams in after the results. Guarantees
+                        // clean output even if the model ignores the no-narration prompt
+                        // (and the UI's "Searching…" indicator already covers intent).
+                        $0.text = ""
+                    }
                 case let .failed(error):
                     update(assistantID) {
                         // Surface the error in-bubble; never crash on a missing key.
